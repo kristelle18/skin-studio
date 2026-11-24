@@ -3874,13 +3874,19 @@ async function deviceAnalyze(){
     cat.under_eye={score:ue,regions:ue!=null?{under_eyes:ue}:{}};
     const areas={}; if(R.forehead)areas.forehead_lines=sco.linesH(R.forehead); if(R.crows)areas.crows_feet=sco.lines(R.crows); if(R.under_eyes)areas.under_eye_lines=sco.lines(R.under_eyes); if(R.naso)areas.nasolabial_folds=sco.lines(R.naso);
     cat.wrinkles={score:avg(Object.values(areas)),regions:{...(areas.forehead_lines!=null?{forehead:areas.forehead_lines}:{}),...(areas.under_eye_lines!=null?{under_eyes:areas.under_eye_lines}:{})},areas};
-    const soft=eyeDet!=null&&eyeDet<3.8;  // the photo itself can't resolve pores or fine texture
-    const m=fr.meta||{}, good=!soft&&m.light>=70&&m.light<=210&&m.sharp>=40&&b.w>=280, conf=good?'medium':'low';
+    // How much fine detail the PHOTO can carry, measured on eyes/brows/lips (always high-contrast).
+    // Tablet video frames are softer than phone stills, so grade it instead of an all-or-nothing cutoff.
+    const DET_FULL=4.0, DET_MIN=2.2, MARGIN_CAP=78;
+    const soft=eyeDet!=null&&eyeDet<DET_MIN;          // truly unusable: withhold pores/texture
+    const marginal=!soft&&eyeDet!=null&&eyeDet<DET_FULL; // usable, but don't let it claim great skin
+    const m=fr.meta||{}, good=!soft&&!marginal&&m.light>=70&&m.light<=210&&m.sharp>=40&&b.w>=280, conf=good?'medium':'low';
     const NOTE={texture:'Fine surface variation (smoothness).',pores:'Share of skin covered by tiny dark points. Needs a sharp, close photo.',pigmentation:'How even the overall tone looks across each area.',redness:'Overall redness and red patches.',
       acne:'Small red, raised-looking spots.',oil:'Bright shine spots in the T-zone.',wrinkles:'Fine line edges on forehead, eyes and smile lines.',under_eye:'How much darker the under-eye area is than the cheeks.'};
-    const categories={texture:{...cat.texture,confidence:soft?'low':conf,note:NOTE.texture},wrinkles:{...cat.wrinkles,confidence:conf,note:NOTE.wrinkles},pores:{...cat.pores,confidence:soft?'low':conf,note:NOTE.pores},
+    const categories={texture:{...cat.texture,confidence:(soft||marginal)?'low':conf,note:NOTE.texture},wrinkles:{...cat.wrinkles,confidence:conf,note:NOTE.wrinkles},pores:{...cat.pores,confidence:(soft||marginal)?'low':conf,note:NOTE.pores},
       pigmentation:{...cat.pigmentation,confidence:'low',note:NOTE.pigmentation+' Rough on this tablet.'},redness:{...cat.redness,confidence:'low',note:NOTE.redness+' Lighting colour affects this a lot.'},under_eye:{...cat.under_eye,confidence:conf,note:NOTE.under_eye},};
     if(soft){cat.pores.score=null;cat.texture.score=null;cat.pores.regions={};cat.texture.regions={};}
+    else if(marginal){ for(const k of ['pores','texture']){ const c=cat[k]; if(c.score!=null) c.score=Math.min(c.score,MARGIN_CAP);
+      if(c.regions) for(const r of Object.keys(c.regions)) if(c.regions[r]!=null) c.regions[r]=Math.min(c.regions[r],MARGIN_CAP); } }
     const scores={texture:cat.texture.score,pores:cat.pores.score,redness:cat.redness.score,dark_spots:cat.pigmentation.score,oiliness:cat.oil.score,fine_lines:cat.wrinkles.score,under_eye:ue};
     Object.keys(scores).forEach(k=>{if(scores[k]==null||!isFinite(scores[k]))delete scores[k];});
     const NAME={texture:'Smoothness',pores:'Pores',redness:'Calmness (redness)',dark_spots:'Even tone',oiliness:'Oil balance',fine_lines:'Fine lines',under_eye:'Under-eye'};
@@ -3892,8 +3898,10 @@ async function deviceAnalyze(){
     const overall=(()=>{const v=Object.values(scores),mean=v.reduce((p,q)=>p+q,0)/v.length,w=[...v].sort((x,y)=>x-y).slice(0,2);return Math.round(.65*mean+.35*(w.reduce((p,q)=>p+q,0)/w.length));})();
     const regions={}; for(const rk of Object.keys(REG)){const vals=Object.values(categories).map(c=>c.regions&&c.regions[rk]).filter(v=>v!=null); if(cat.oil.regions[rk]!=null)vals.push(cat.oil.regions[rk]);
       if(vals.length){const worst=Object.entries(categories).filter(([k,c])=>c.regions&&c.regions[rk]!=null).sort((x,y)=>x[1].regions[rk]-y[1].regions[rk])[0];regions[rk]={score:avg(vals),note:worst?'most visible: '+(NAME[{acne:'blemishes',pigmentation:'dark_spots',wrinkles:'fine_lines'}[worst[0]]||worst[0]]||worst[0]).toLowerCase():''};}}
-    const issue=[soft?'this photo is too soft to resolve pores or fine texture, so those two scores are left out rather than guessed - move closer, use the back camera and steady, even light':'',b.w*S<560?'the face was too small or low-resolution to see pores well (move closer or use the back camera)':'',m.light<70?'the light was dim':'',m.light>210?'the light was very bright':'',m.sharp<40?'the photo was a little blurry':'',b.w<280?'the face was small in the frame':''].filter(Boolean);
-    const r={method:'device',scoring:3,quality:{ok:!issue.length,issue:issue.length?'Accuracy is lower because '+issue.join(' and ')+'.':''},skin_type:null,overall,scores,
+    const det=eyeDet!=null?eyeDet.toFixed(1):'?';
+    const issue=[soft?`this photo is too soft to resolve pores or fine texture (detail ${det}, needs ${DET_MIN}+), so those two scores are left out rather than guessed - move closer, use the back camera and steady, even light`:'',
+      marginal?`the photo carries only moderate fine detail (${det}, ${DET_FULL}+ is ideal), so the pore and smoothness scores are capped at ${MARGIN_CAP} rather than reported as better than the photo can show`:'',b.w*S<560?'the face was too small or low-resolution to see pores well (move closer or use the back camera)':'',m.light<70?'the light was dim':'',m.light>210?'the light was very bright':'',m.sharp<40?'the photo was a little blurry':'',b.w<280?'the face was small in the frame':''].filter(Boolean);
+    const r={method:'device',scoring:3,detail:eyeDet!=null?+eyeDet.toFixed(2):null,quality:{ok:!issue.length,issue:issue.length?'Accuracy is lower because '+issue.join(' and ')+'.':''},skin_type:null,overall,scores,
       notes:{texture:'Measured from fine detail in the front photo.',blemishes:'Individual blemishes are not measured on this tablet - scan in Claude for that.',pores:`Share of skin covered by tiny dark points, measured at ${Math.round(b.w*S)}px across the face.`,dark_spots:'Rough measure of how evenly toned the skin looks. This tablet cannot count individual dark marks reliably - scan in Claude for that.',redness:'Affected by the colour of your light.'},
       summary:`On-device measurements of your front photo. Looking best: ${ranked.slice(0,2).map(([k])=>NAME[k]).join(' and ')}. Most room to improve: ${ranked.slice(-2).reverse().map(([k])=>NAME[k]).join(' and ')}. These are relative measures for tracking change, so scan in the same place and light each time.`,
       positives:ranked.slice(0,2).map(([k,v])=>`${NAME[k]} looks good (${v})`),
@@ -4011,7 +4019,7 @@ renderDevCard=function(){
     <div class="tw-actions"><label class="tb primary" for="dataIn">⬆ Import data file</label><button class="tb" data-dev="export">⬇ Back up / export my data</button>${TAB.installEvt?'<button class="tb" data-tfs="install">📲 Install app</button>':''}</div>
     <div class="tw-actions" style="margin-top:10px;align-items:center"><span class="tw-sub">App version <b>${APP_VER}</b></span><button class="tb link" data-tfs="update">↻ Check for updates</button></div>`;
 };
-const APP_VER='1.5 (calibrated scan)';
+const APP_VER='1.6 (works with phone + tablet photos)';
 async function appUpdate(){
   toast('Checking for updates…');
   try{ const reg=await navigator.serviceWorker?.getRegistration(); if(reg) await reg.update();
