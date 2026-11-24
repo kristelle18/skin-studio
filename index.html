@@ -414,6 +414,19 @@ details.more summary{cursor:pointer;color:var(--accent);font-weight:600;font-siz
 .mark-led.plan{background:transparent!important;border:2px solid;opacity:.6}
 @media (max-width:420px){.day{min-height:54px}.cal{padding:10px}}
 @media (max-width:480px){.when{grid-template-columns:1fr 1fr}.pname{font-size:20px}.stat .n{font-size:21px}}
+
+#askFab{position:fixed;right:16px;bottom:calc(84px + env(safe-area-inset-bottom));z-index:14;display:flex;align-items:center;gap:6px;border:0;border-radius:999px;padding:11px 16px;background:var(--accent);color:#fff;font:inherit;font-weight:600;font-size:14px;box-shadow:0 8px 22px rgba(0,0,0,.18);cursor:pointer}
+.pc-thumbs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}.pc-thumbs div{position:relative}.pc-thumbs img{width:72px;height:72px;object-fit:cover;border-radius:10px;border:1px solid var(--line)}
+.pc-thumbs button{position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:50%;border:0;background:var(--ink);color:var(--bg);font-size:11px;cursor:pointer}
+.pc-res{margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+.pc-ings{display:grid;gap:8px}.pc-ing{display:flex;gap:10px;align-items:flex-start;font-size:14px}.pc-ing .badge{min-width:22px;justify-content:center}
+.pc-nudge{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.plan-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+.plan-day{font:inherit;min-width:0;display:flex;flex-direction:column;align-items:center;gap:1px;padding:8px 1px;border:1px solid var(--line);background:var(--bg);border-radius:12px;cursor:pointer;color:var(--ink)}
+.plan-day span{font-size:11px;color:var(--muted)}.plan-day b{font-size:16px}.plan-day i{font-style:normal;font-size:10px;color:var(--muted);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.plan-day.today{border-color:var(--accent)}.plan-day.on{background:var(--accent);color:#fff;border-color:var(--accent)}.plan-day.on span,.plan-day.on i{color:#fff}
+.routine li .linkbtn{text-align:left;display:inline;padding:0}
+#pcText{font:inherit;font-size:14px;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);resize:vertical;box-sizing:border-box}
 /* ===== Skin Studio tablet layout (Galaxy Tab S8, 11" 2560×1600) ===== */
 html{-webkit-text-size-adjust:100%}
 .src.database{background:var(--accent-soft);color:var(--accent)}
@@ -549,6 +562,7 @@ img.pimg{object-fit:contain;background:#fff;border-radius:10px;flex:none;border:
       <button data-quick="shot"><span>💉</span>Log shot</button>
       <button data-quick="weight"><span>⚖️</span>Log weight</button>
     </div>
+    <div id="todayPlan"></div>
     <div id="aftercare"></div>
     <div id="ledRoutine"></div>
     <div class="card">
@@ -620,7 +634,7 @@ img.pimg{object-fit:contain;background:#fff;border-radius:10px;flex:none;border:
 <input type="file" id="faceVidGal" accept="video/*" class="vh" tabindex="-1">
 <input type="file" id="facePhoto" accept="image/*" capture="user" class="vh" tabindex="-1">
 <input type="file" id="facePhotoGal" accept="image/*" class="vh" tabindex="-1">
-<input type="file" id="dataIn" accept="application/json,.json" class="vh" tabindex="-1">
+<input type="file" id="pcCam" accept="image/*" capture="environment" multiple hidden><input type="file" id="dataIn" accept="application/json,.json" class="vh" tabindex="-1">
 <input type="file" id="sheetIn" accept="image/*" class="vh" tabindex="-1">
 <div id="scanner" class="scanner hidden" role="dialog" aria-label="360 face scan"></div>
 <input type="file" id="faceCam" accept="image/*" capture="user" class="vh" tabindex="-1">
@@ -767,7 +781,7 @@ document.addEventListener('click',e=>{const q=e.target.closest('[data-quick]');i
   if(k==='weight'){show('health');setTimeout(()=>{const w=$('hw-v');if(w){w.scrollIntoView({block:'center',behavior:'smooth'});w.focus();}},80);return;}});
 
 function renderAll(){
-  renderShelf(); renderRoutine(); renderLedRoutine(); renderAlerts(); if(view==='cal') renderCal(); if(view==='health') renderHealth(); if(view==='skin') renderSkin();
+  renderShelf(); renderRoutine(); renderLedRoutine(); renderAlerts(); if(typeof renderTodayPlan==='function') renderTodayPlan(); if(view==='cal') renderCal(); if(view==='health') renderHealth(); if(view==='skin') renderSkin();
   if(view==='detail'&&detailId){const it=items.find(x=>x.id===detailId); if(it) renderDetail(it,false); else {detailId=null;show('shelf');}}
 }
 
@@ -910,8 +924,8 @@ function productText(i){
 }
 function productArea(i){return /body|bikini|intimate|underarm|\blegs?\b|depilat|hair removal|self[- ]?tan|shav/.test(((i.product_name||'')+' '+(i.category||'')).toLowerCase())?'body':'face';}
 function productGroups(i){const txt=productText(i);return Object.keys(GROUPS).filter(g=>GROUPS[g].re.test(txt));}
-function productFlags(i){
-  const T=todayStr(), gs=productGroups(i), area=productArea(i), out=[];
+function productFlags(i,T0){
+  const T=T0||todayStr(), gs=productGroups(i), area=productArea(i), out=[];
   if(!gs.length) return out;
   tItems.forEach(t=>{
     const r=rulesOf(t); if(r.area!=='both'&&r.area!==area&&!(gs.includes('tan')||gs.includes('depil'))) return;
@@ -1656,7 +1670,7 @@ function renderSkin(){
     <div class="fs-hero-row"><div><h2>Clinic-style skin analysis</h2><p>Guided video scan · 9 angles · live landmark tracking · AI skin analysis</p></div>
     <svg viewBox="0 0 80 96" class="fs-mini" aria-hidden="true"><ellipse cx="40" cy="48" rx="28" ry="38" fill="none" stroke="#5fe1ee" stroke-opacity=".5"/><path d="M12 48h56M40 10v76M18 28q22 10 44 0M18 68q22-10 44 0" stroke="#9b8cff" stroke-opacity=".45" fill="none"/><circle cx="29" cy="42" r="2" fill="#5fe1ee"/><circle cx="51" cy="42" r="2" fill="#5fe1ee"/><circle cx="40" cy="55" r="2" fill="#5fe1ee"/></svg></div>
     <button class="fs-btn" data-sact="scan360">Start face scan</button>
-    ${L?`<p class="fs-dim" style="margin:10px 0 0">Last scan ${tfl(L.date)} · score ${L.overall}</p>`:''}
+    ${L?`<p class="fs-dim" style="margin:10px 0 0">Last scan ${tfl(L.date)} · score ${L.overall} · ${(()=>{const sd=scanDue();return sd.due?'<b style="color:#5fe1ee">next scan due now</b>':'next scan '+tfl(sd.next);})()}</p>`:`<p class="fs-dim" style="margin:10px 0 0">Scan every ${SCAN_EVERY} days in the same light to track progress.</p>`}
   </div>`;
   // result
   let resCard='';
@@ -1703,7 +1717,7 @@ function renderSkin(){
     ${L.routine?`<div class="card"><h3>Suggested routine</h3><div class="routine">
       <div class="d"><div class="k" style="font-weight:600;font-size:13px">☀️ Morning</div><ol>${(L.routine.am||[]).map(routineStep).join('')}</ol></div>
       <div class="d"><div class="k" style="font-weight:600;font-size:13px">🌙 Night</div><ol>${(L.routine.pm||[]).map(routineStep).join('')}</ol></div></div>
-      ${(L.missing||[]).length?`<h3 style="margin-top:14px">Could help (not on your shelf)</h3><ul>${L.missing.map(m=>`<li><b>${esc(m.type)}</b><div class="flagwhy">${esc(m.why||'')}</div></li>`).join('')}</ul>`:''}
+      ${(L.missing||[]).length?`<h3 style="margin-top:14px">Could help (not on your shelf)</h3><ul>${L.missing.map(m=>`<li><b>${esc(m.type)}</b><div class="flagwhy">${esc(m.why||'')}</div><button class="linkbtn" data-plan="findopts" data-t="${esc(m.type)}" style="font-size:13px">Find options at 3 price points →</button></li>`).join('')}</ul>`:''}
       <p class="note">Built around your shelf on ${tf(L.date)}. Products on hold for treatments are left out. Check the Routine tab for today's treatment holds.</p></div>`:''}`;
   }
   const fitList=items.filter(i=>i._state!=='finished'&&SK.fit[i.id]);
@@ -1730,7 +1744,7 @@ function renderSkin(){
     <div class="chatin"><input type="text" id="skQ" placeholder="Ask anything about your skin…" ${skChatBusy?'disabled':''}><button class="tb primary" data-sact="send" ${skChatBusy?'disabled':''}>Send</button></div>
     ${skChat.length?'<button class="linkbtn" data-sact="clearChat" style="margin-top:8px;font-size:13px">Clear chat</button>':''}
     <p class="note">General skincare info, not medical advice.</p></div>`;
-  el.innerHTML=profileCard+scanCard+resCard+cmpCard+fitCard+progCard+chatCard;
+  el.innerHTML=profileCard+scanCard+planCardHTML()+checkCardHTML()+resCard+cmpCard+fitCard+progCard+chatCard; renderTodayPlan();
   if(L&&L.lm){paintHeat();init3D();} if(CMP.open){paintCompare();const w=$('cmpWipe');if(w)w.oninput=()=>{CMP.wipe=+w.value;paintCompare();};['cmpA','cmpB'].forEach(id=>{const x=$(id);if(x)x.onchange=async()=>{CMP[id==='cmpA'?'a':'b']=x.value;await loadCmp();renderSkin();};});}
   const box=$('skChat'); if(box) box.scrollTop=box.scrollHeight;
   ['sp-type','sp-con'].forEach(id=>{const c=$(id);if(!c)return;c.onclick=e=>{const b=e.target.closest('.dchip');if(!b)return;if(id==='sp-con')b.classList.toggle('on');else c.querySelectorAll('.dchip').forEach(x=>x.classList.toggle('on',x===b));};});
@@ -2651,7 +2665,7 @@ async function importData(file){
   if(d.health&&H){ const h=d.health; await hSave({...H,height_cm:H.height_cm||h.height_cm,shots:mergeBy(H.shots,h.shots,s=>s.date).sort((a,b)=>a.date.localeCompare(b.date)),weights:mergeBy(H.weights,h.weights,w=>w.date).sort((a,b)=>a.date.localeCompare(b.date))}); n++; }
   if(d.skin&&SK){ const s=d.skin; const scans=mergeBy(SK.scans,s.scans,x=>x.id||x.date).sort((a,b)=>a.date.localeCompare(b.date));
     const last=!SK.last?s.last:!s.last?SK.last:(s.last.date>SK.last.date?s.last:SK.last);
-    await skSave({...SK,profile:SK.profile&&(SK.profile.type||SK.profile.concerns.length)?SK.profile:(s.profile||SK.profile),scans,last,fit:{...(s.fit||{}),...(SK.fit||{})},consent:SK.consent||s.consent||null}); n++; }
+    await skSave({...SK,profile:SK.profile&&(SK.profile.type||SK.profile.concerns.length)?SK.profile:(s.profile||SK.profile),scans,last,fit:{...(s.fit||{}),...(SK.fit||{})},consent:SK.consent||s.consent||null,checks:mergeBy(SK.checks,s.checks,x=>x.id).slice(0,30),plan:(SK.plan&&s.plan&&SK.plan.created>=s.plan.created)?SK.plan:(s.plan||SK.plan||null)}); n++; }
   if(d.led&&L){ const l=d.led; await lSave({...L,goal:L.sessions.length?L.goal:l.goal,plan:L.sessions.length?L.plan:l.plan,sessions:mergeBy(L.sessions,l.sessions,x=>x.date+'|'+(x.t||'')+'|'+x.color)}); n++; }
   toast(n?'Data imported ✓':'Nothing new to import');
 }
@@ -2665,6 +2679,286 @@ document.addEventListener('click',e=>{const b=e.target.closest('[data-dev]');if(
 $('dataIn').addEventListener('change',e=>{const f=e.target.files[0];e.target.value='';if(f)importData(f);});
 $('sheetIn').addEventListener('change',e=>{const f=e.target.files[0];e.target.value='';if(f)importScanSheet(f);});
 renderDevCard();
+
+/* ================= Lóvi-style extras: product & ingredient checker, weekly care plan, scan reminders ================= */
+const SCAN_EVERY=10;
+let pc={busy:false,imgs:[],text:'',res:null,err:'',open:null,code:null};
+let planBusy=false, planDay=null;
+function scanDue(){ if(!SK) return null; const L=SK.last; if(!L) return {first:true,due:true};
+  const days=tdiff(todayStr(),L.date); return {days,due:days>=SCAN_EVERY,next:tadd(L.date,SCAN_EVERY)}; }
+
+/* ---- local ingredient knowledge (works without AI, e.g. on the tablet app) ---- */
+const ING=[
+  [/niacinamide/,'Niacinamide','Brightening, pores, barrier','good',['Dark spots','Large pores','Oiliness','Redness']],
+  [/hyaluron|sodium hyaluronate/,'Hyaluronic acid','Hydration','good',['Dryness','Fine lines']],
+  [/ceramide/,'Ceramides','Barrier repair','good',['Dryness','Redness']],
+  [/panthenol/,'Panthenol','Soothing, hydration','good',['Redness','Dryness']],
+  [/centella|madecassoside|asiaticoside|cica/,'Centella asiatica','Soothing','good',['Redness','Acne']],
+  [/glycerin/,'Glycerin','Humectant','good',['Dryness']],
+  [/squalane/,'Squalane','Lightweight emollient','good',['Dryness']],
+  [/allantoin/,'Allantoin','Soothing','good',['Redness']],
+  [/tranexamic/,'Tranexamic acid','Dark spots','good',['Dark spots']],
+  [/azelaic/,'Azelaic acid','Spots, redness, blemishes','good',['Acne','Dark spots','Redness']],
+  [/peptide|matrixyl|palmitoyl/,'Peptides','Firmness, fine lines','good',['Fine lines']],
+  [/zinc oxide|titanium dioxide|tinosorb|uvinul|bemotrizinol|avobenzone|octocrylene|ethylhexyl triazone|methoxycinnamate/,'UV filters','Sun protection','good',['Dark spots','Fine lines']],
+  [/arbutin|kojic|licorice|glycyrrhiz/,'Brightening extracts','Even tone','good',['Dark spots','Dullness']],
+  [/green tea|camellia sinensis|resveratrol|ferulic|tocopherol/,'Antioxidants','Protection, glow','good',['Dullness','Fine lines']],
+  [/retinal|retinaldehyde/,'Retinal','Strong retinoid','caution',['Fine lines','Acne','Texture']],
+  [/retinol|retinyl|hydroxypinacolone|granactive|adapalene|tretinoin/,'Retinoid','Cell turnover','caution',['Fine lines','Acne','Texture']],
+  [/bakuchiol/,'Bakuchiol','Gentle retinol alternative','good',['Fine lines','Texture']],
+  [/ascorbic|ascorbyl|vitamin c/,'Vitamin C','Brightening antioxidant','caution',['Dark spots','Dullness']],
+  [/glycolic/,'Glycolic acid (AHA)','Exfoliant','caution',['Texture','Dullness']],
+  [/lactic acid|mandelic/,'Lactic / mandelic acid (AHA)','Gentle exfoliant','caution',['Texture','Dullness']],
+  [/salicylic|\bbha\b|betaine salicylate/,'Salicylic acid (BHA)','Pore-clearing exfoliant','caution',['Acne','Large pores','Oiliness']],
+  [/gluconolactone|lactobionic/,'PHA','Very gentle exfoliant','good',['Texture']],
+  [/benzoyl peroxide/,'Benzoyl peroxide','Acne treatment','caution',['Acne']],
+  [/hydroquinone/,'Hydroquinone','Strong lightener (medical)','avoid',[]],
+  [/fragrance|parfum|aroma/,'Fragrance','Scent','caution',[]],
+  [/limonene|linalool|citral|geraniol|eugenol|citronellol/,'Fragrance allergens','Scent components','caution',[]],
+  [/essential oil|lavandula|lavender oil|peppermint|mentha|citrus .*peel oil|bergamot|eucalyptus|tea tree|melaleuca/,'Essential oils','Scent, can irritate','caution',[]],
+  [/alcohol denat|sd alcohol|ethanol|isopropyl alcohol/,'Drying alcohol','Solvent, quick-dry feel','caution',[]],
+  [/coconut oil|cocos nucifera oil|isopropyl myristate|isopropyl palmitate|myristyl myristate|lanolin|wheat germ|algae extract|carrageenan/,'Pore-clogging risk','Can clog pores','caution',['Acne']],
+  [/methylisothiazolinone|methylchloroisothiazolinone/,'MIT preservative','Common allergen','avoid',[]],
+  [/paraben/,'Parabens','Preservative (well studied)','neutral',[]],
+  [/phenoxyethanol/,'Phenoxyethanol','Preservative','neutral',[]],
+  [/dimethicone|silicone|cyclopenta/,'Silicones','Smooth feel','neutral',[]],
+  [/collagen/,'Collagen','Surface hydration','good',['Dryness']],
+  [/snail|mucin/,'Snail mucin','Hydration, repair','good',['Dryness','Texture']],
+];
+function localIngredientCheck(text){
+  const t=(text||'').toLowerCase(); const P=SK.profile, hits=[]; const seen=new Set();
+  ING.forEach(([re,name,role,rating,helps])=>{ if(re.test(t)&&!seen.has(name)){ seen.add(name);
+    let r=rating, note='';
+    if(name==='Retinoid'||name==='Retinal'){ if(P.pregnant){r='avoid';note='Not for pregnancy';} else note=P.sensitive?'Start 2 nights a week':'PM only, use SPF'; }
+    if(/acid|Vitamin C|Benzoyl/.test(name)&&P.sensitive) note='May sting sensitive skin';
+    if(name==='Pore-clogging risk'&&!(P.concerns.includes('Acne')||P.type==='oily')) {r='neutral';note='Only a concern if you break out';}
+    if((name==='Fragrance'||name==='Essential oils'||name==='Fragrance allergens')&&P.sensitive) note='Can irritate sensitive skin';
+    if(name==='Salicylic acid (BHA)'&&P.pregnant) note='Low % is usually OK — ask your doctor';
+    if(name==='Hydroquinone') note='Use only with a doctor';
+    hits.push({name,role,rating:r,note,helps}); }});
+  const help=[...new Set(hits.filter(h=>h.rating!=='avoid').flatMap(h=>h.helps).filter(c=>P.concerns.includes(c)))];
+  const bad=hits.filter(h=>h.rating==='avoid').length, care=hits.filter(h=>h.rating==='caution').length;
+  const irrit=P.sensitive?hits.filter(h=>/Fragrance|Essential oils|Drying alcohol/.test(h.name)).length:0;
+  let match=60+Math.min(help.length,3)*7-care*7-irrit*8-bad*25; match=Math.max(5,Math.min(95,match));
+  const fit=bad?'avoid':match>=80&&!irrit?'great':match>=62?'good':'caution';
+  const groups=Object.keys(GROUPS).filter(g=>GROUPS[g].re.test(t));
+  const shelf=items.filter(i=>i._state!=='finished');
+  const conflicts=[];
+  if(groups.includes('retinoid')) shelf.filter(i=>productGroups(i).includes('retinoid')).forEach(i=>conflicts.push({id:i.id,note:'Both are retinoids — use one at a time'}));
+  if(groups.includes('acid')||groups.includes('vitc')) shelf.filter(i=>productGroups(i).includes('retinoid')).forEach(i=>conflicts.push({id:i.id,note:'Don’t layer on the same night as your retinoid'}));
+  return {product_name:null,brand:null,category:null,ingredients_source:'typed by user',fit,match,
+    verdict:hits.length?(fit==='avoid'?'Contains an ingredient worth avoiding for you.':help.length?`Has ingredients for your ${help.slice(0,2).join(' and ').toLowerCase()}.`:'Nothing stands out for your concerns.'):'I couldn’t recognise ingredients in that text.',
+    good_for:help.map(c=>`Helps with ${c.toLowerCase()}`),watch_out:hits.filter(h=>h.rating!=='good'&&h.rating!=='neutral').map(h=>`${h.name}${h.note?' — '+h.note:''}`),
+    ingredients:hits.map(({name,role,rating,note})=>({name,role,rating,note})),
+    flags:{fragrance:seen.has('Fragrance')||seen.has('Fragrance allergens'),essential_oils:seen.has('Essential oils'),drying_alcohol:seen.has('Drying alcohol'),comedogenic_risk:seen.has('Pore-clogging risk')?'medium':'low',pregnancy_safe:(seen.has('Retinoid')||seen.has('Retinal')||seen.has('Hydroquinone'))?'no':'check'},
+    shelf_conflicts:conflicts,shelf_overlap:[],treatment_notes:groups.length&&tItems.length?`Contains ${groups.map(g=>GROUPS[g].label.toLowerCase()).join(', ')} — follow your treatment holds.`:null,
+    how_to_use:null,confidence:'low',local:true,_groups:groups};
+}
+
+/* ---- AI product check ---- */
+function pcPrompt(text,code){
+  const P=SK.profile,L=SK.last;
+  return `You are an independent cosmetic-ingredient analyst inside a personal skincare app. You do not sell products, have no brand partners, and never favour brands. Evaluate the product shown in the photo(s) and/or described below for THIS user only.
+Today: ${todayStr()}
+User profile: skin type ${P.type||'not sure'}; sensitive: ${P.sensitive?'yes':'no'}; concerns: ${P.concerns.join(', ')||'none given'}; pregnant/breastfeeding: ${P.pregnant?'YES':'no'}.
+Latest face scan: ${L?JSON.stringify({date:L.date,overall:L.overall,scores:L.scores,focus:(L.focus||[]).map(f=>f.name)}):'none'}
+Their shelf: ${JSON.stringify(shelfForAI())}
+Treatments: ${JSON.stringify(treatmentsForAI().map(t=>{const x=tItems.find(y=>y.name===t.name);const r=x?rulesOf(x):null;return {...t,product_rules:r?Object.fromEntries(Object.entries(r.items).map(([k,v])=>[GROUPS[k].label,`${v.b}d before/${v.a}d after`])):null};}))}
+${code?`Barcode read from the photo: ${code}\n`:''}${text?`User typed: """${text.slice(0,4000)}"""\n`:''}
+Reply with JSON only:
+{"product_name":string|null,"brand":string|null,"category":string|null,
+"ingredients_source":"read from photo"|"typed by user"|"typical formula, not read"|"unknown",
+"fit":"great"|"good"|"caution"|"avoid","match":0-100,"verdict":"one short sentence for this user",
+"good_for":[max 4 short items tied to their concerns],"watch_out":[max 4 short items],
+"ingredients":[{"name":string,"role":"≤5 words","rating":"good"|"neutral"|"caution"|"avoid","note":"≤10 words, personal to this user, or empty"}] (max 14, most important first),
+"flags":{"fragrance":bool,"essential_oils":bool,"drying_alcohol":bool,"comedogenic_risk":"low"|"medium"|"high","pregnancy_safe":"yes"|"no"|"check"},
+"shelf_overlap":[{"id":shelf id,"note":"≤12 words"}],"shelf_conflicts":[{"id":shelf id,"note":"≤12 words"}],
+"treatment_notes":string|null,"how_to_use":{"time":"AM"|"PM"|"AM & PM","frequency":string,"step":string}|null,
+"confidence":"high"|"medium"|"low"}
+Rules: judge only ingredients you can read, or the well-known formula of an identified product (then say "typical formula, not read" and lower confidence). If nothing is readable or identifiable, set product_name null, ingredients [] and explain in verdict. Ratings are about fit for this person, not product quality. Cosmetic information only — no medical claims, no diagnosis. Never suggest buying other brands.`;
+}
+async function readBarcode(blob){
+  try{ if(!('BarcodeDetector' in window)) return null; const det=new BarcodeDetector({formats:['ean_13','ean_8','upc_a','upc_e','code_128']});
+    const bmp=await createImageBitmap(blob); const r=await det.detect(bmp); return r[0]?.rawValue||null; }catch{return null;}
+}
+async function runCheck(){
+  const text=($('pcText')?.value||'').trim(); pc.text=text;
+  if(!pc.imgs.length&&!text){toast('Add a photo or type the ingredients first');return;}
+  pc.busy=true; pc.err=''; pc.res=null; renderSkin(); $('pcCard')?.scrollIntoView({block:'start',behavior:'smooth'});
+  let res=null;
+  try{
+    if(!pc.code) for(const im of pc.imgs){const c=await readBarcode(im.blob); if(c){pc.code=c;break;}}
+    if(sample){
+      const opts={modelTier:'complex'}; if(pc.imgs.length){const lim=await sample.limits?.().catch(()=>null);if(lim&&!lim.images)throw{message:'Photo reading isn’t available here — paste the ingredients instead.'};opts.images=pc.imgs.map(x=>x.blob);}
+      res=await sample.json(pcPrompt(text,pc.code),opts);
+    } else if(typeof window.ssLookupBarcode==='function'&&pc.code&&!text){
+      const p=await window.ssLookupBarcode(pc.code); if(p&&p.ingredients_text){res=localIngredientCheck(p.ingredients_text);res.product_name=p.product_name||null;res.brand=p.brand||null;res.ingredients_source='product database';}
+      else throw{message:'I found the barcode but no ingredient list. Paste the ingredients from the label.'};
+    } else if(text){ res=localIngredientCheck(text); }
+    else throw{message:'Photo checks need Claude. Paste the ingredient list instead and I’ll check it on this device.'};
+  }catch(e){pc.err=e&&e.message?e.message:(e&&e.code==='rate_limited'?'Too many checks at once — try again in a minute.':'Couldn’t check that product. Try clearer photos of the ingredient list.');}
+  pc.busy=false;
+  if(res){ res.fit=FITLAB[res.fit]?res.fit:'caution'; res.ingredients=(res.ingredients||[]).slice(0,16); res.id=newId(); res.date=todayStr(); res.code=pc.code||null;
+    pc.res=res; pc.open=res.id; pc.imgs.forEach(x=>URL.revokeObjectURL(x.url)); pc.imgs=[]; pc.code=null; pc.text='';
+    const hist=[{...res}].concat((SK.checks||[]).filter(x=>x.id!==res.id)).slice(0,20);
+    await skSave({...SK,checks:hist}); }
+  else renderSkin();
+}
+const RATE={good:['✓','b-good'],neutral:['•','b-unk'],caution:['!','b-warn'],avoid:['✕','b-bad']};
+function checkResultHTML(r){
+  if(!r) return '';
+  const l=FITLAB[r.fit]||['—','b-unk'], nm=p=>{const x=items.find(i=>i.id===p);return x?x.product_name:'a shelf product';};
+  const owned=r.product_name&&items.some(i=>i.product_name&&i.product_name.toLowerCase()===r.product_name.toLowerCase());
+  const fl=r.flags||{};
+  return `<div class="pc-res">
+    <div class="skhead"><div class="ring ${r.fit==='avoid'?'bad':r.fit==='caution'?'warn':'good'}" style="--p:${r.match??50}"><span>${r.match??'—'}</span></div>
+      <div><div class="hsite" style="margin:0">${esc(r.product_name||'Your product')}</div><div class="tw-sub">${esc([r.brand,r.category].filter(Boolean).join(' · '))}</div><span class="badge xs ${l[1]}" style="margin-top:4px">${l[0]} for you</span></div></div>
+    <p style="margin:10px 0 0">${esc(r.verdict||'')}</p>
+    <div class="chips" style="margin-top:8px">
+      <span class="chip ${fl.fragrance?'':'n'}">${fl.fragrance?'⚠️ Fragrance':'✓ No fragrance'}</span>
+      ${fl.essential_oils?'<span class="chip">⚠️ Essential oils</span>':''}${fl.drying_alcohol?'<span class="chip">⚠️ Drying alcohol</span>':''}
+      <span class="chip n">Pore-clog risk: ${esc(fl.comedogenic_risk||'—')}</span>
+      <span class="chip ${fl.pregnancy_safe==='no'?'':'n'}">Pregnancy: ${fl.pregnancy_safe==='yes'?'OK':fl.pregnancy_safe==='no'?'avoid':'check'}</span></div>
+    ${(r.good_for||[]).length?`<h3 style="margin-top:14px">Good for you</h3><ul>${r.good_for.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:''}
+    ${(r.watch_out||[]).length?`<h3 style="margin-top:12px">Watch out</h3><ul>${r.watch_out.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:''}
+    ${(r.shelf_conflicts||[]).length||(r.shelf_overlap||[]).length?`<h3 style="margin-top:12px">With your shelf</h3><ul>${(r.shelf_conflicts||[]).map(c=>`<li>⚠️ <b>${esc(nm(c.id))}</b> — ${esc(c.note)}</li>`).join('')}${(r.shelf_overlap||[]).map(c=>`<li>↔️ <b>${esc(nm(c.id))}</b> — ${esc(c.note)}</li>`).join('')}</ul>`:''}
+    ${r.treatment_notes?`<div class="banner" style="margin:10px 0 0">✨ ${esc(r.treatment_notes)}</div>`:''}
+    ${r.how_to_use?`<p class="tw-sub" style="margin:10px 0 0">How it would fit: <b>${esc(r.how_to_use.time||'')}</b> · ${esc(r.how_to_use.frequency||'')} · ${esc(r.how_to_use.step||'')}</p>`:''}
+    ${(r.ingredients||[]).length?`<h3 style="margin-top:14px">Ingredients</h3><div class="pc-ings">${r.ingredients.map(i=>{const k=RATE[i.rating]||RATE.neutral;return `<div class="pc-ing"><span class="badge xs ${k[1]}">${k[0]}</span><div><b>${esc(i.name)}</b> <span class="tw-sub">${esc(i.role||'')}</span>${i.note?`<div class="flagwhy">${esc(i.note)}</div>`:''}</div></div>`;}).join('')}</div>`:''}
+    <p class="note">Ingredients ${esc(r.ingredients_source||'unknown')} · ${esc(r.confidence||'medium')} confidence${r.local?' · checked on this device':''}. Cosmetic guidance, not medical advice — patch test new products.</p>
+    <div class="tw-actions">${owned?'<span class="tw-sub">Already on your shelf</span>':`<button class="tb primary" data-pc="add" data-id="${esc(r.id)}">＋ Add to shelf</button>`}
+      <button class="tb" data-pc="wish" data-id="${esc(r.id)}">${r.wish?'♥ On wishlist':'♡ Wishlist'}</button>
+      <button class="tb link" data-pc="ask" data-id="${esc(r.id)}">Ask about it</button></div>
+  </div>`;
+}
+function checkCardHTML(){
+  const hist=SK.checks||[]; const cur=pc.res&&pc.res.id===pc.open?pc.res:hist.find(x=>x.id===pc.open);
+  const wish=hist.filter(x=>x.wish);
+  return `<div class="card" id="pcCard"><div class="toolbar" style="margin-bottom:4px"><h3 style="margin:0">🔍 Product & ingredient check</h3><span class="badge xs b-unk">Independent</span></div>
+    <p class="tw-sub" style="margin:0 0 10px">Before you buy: photograph the barcode, ingredient list or label — or paste the ingredients — to see if it suits <b>your</b> skin, clashes with your shelf, or needs to wait around a treatment. No sponsored brands, nothing to sell.</p>
+    ${pc.imgs.length?`<div class="pc-thumbs">${pc.imgs.map((x,k)=>`<div><img src="${x.url}" alt=""><button data-pc="rm" data-k="${k}" aria-label="Remove">✕</button></div>`).join('')}</div>`:''}
+    <div class="tw-actions"><label class="tb" for="pcCam">📷 ${pc.imgs.length?'Add another photo':'Scan label / barcode'}</label></div>
+    <textarea id="pcText" rows="3" placeholder="…or paste the ingredient list (INCI) or type the product name" style="margin-top:10px;width:100%">${esc(pc.text)}</textarea>
+    <div class="tw-actions" style="margin-top:8px"><button class="tb primary" data-pc="run" ${pc.busy?'disabled':''}>${pc.busy?'Checking…':'Check fit for my skin'}</button></div>
+    ${pc.err?`<div class="hwarn">${esc(pc.err)}</div>`:''}
+    ${cur?checkResultHTML(cur):''}
+    ${wish.length?`<h3 style="margin-top:16px">♥ Wishlist</h3><div class="hlist" style="margin-top:0">${wish.map(x=>{const l=FITLAB[x.fit]||['—','b-unk'];return `<button class="hrow" data-pc="open" data-id="${esc(x.id)}"><span><b>${esc(x.product_name||'Checked product')}</b> <span class="tw-sub">${esc(x.brand||'')}</span></span><span class="badge xs ${l[1]}">${l[0]}</span></button>`;}).join('')}</div>`:''}
+    ${hist.length?`<details style="margin-top:12px"><summary class="tw-sub" style="cursor:pointer">Recent checks (${hist.length})</summary><div class="hlist">${hist.map(x=>{const l=FITLAB[x.fit]||['—','b-unk'];return `<button class="hrow" data-pc="open" data-id="${esc(x.id)}"><span><b>${esc(x.product_name||'Checked product')}</b> · <span class="tw-sub">${tf(x.date)}</span></span><span class="badge xs ${l[1]}">${l[0]}</span></button>`;}).join('')}</div><button class="linkbtn" data-pc="clear" style="font-size:12.5px;color:var(--bad);margin-top:6px">Clear history</button></details>`:''}
+  </div>`;
+}
+document.addEventListener('change',async e=>{
+  if(e.target.id!=='pcCam') return; const fs=[...e.target.files]; e.target.value='';
+  for(const f of fs.slice(0,4-pc.imgs.length)){ try{const blob=await shrink(f,1600); pc.imgs.push({blob,url:URL.createObjectURL(blob)});}catch{toast('Couldn’t read that photo');} }
+  pc.text=$('pcText')?.value||pc.text; renderSkin(); $('pcCard')?.scrollIntoView({block:'start'});
+});
+document.addEventListener('click',async e=>{
+  const b=e.target.closest('[data-pc]'); if(!b||!SK) return; const a=b.dataset.pc, id=b.dataset.id;
+  const find=()=> (SK.checks||[]).find(x=>x.id===id)||(pc.res&&pc.res.id===id?pc.res:null);
+  if(a==='run'){runCheck();return;}
+  if(a==='rm'){const k=+b.dataset.k;URL.revokeObjectURL(pc.imgs[k].url);pc.imgs.splice(k,1);pc.text=$('pcText')?.value||'';renderSkin();return;}
+  if(a==='open'){pc.open=pc.open===id?null:id;renderSkin();$('pcCard')?.scrollIntoView({block:'start',behavior:'smooth'});return;}
+  if(a==='clear'){pc.open=null;pc.res=null;await skSave({...SK,checks:(SK.checks||[]).filter(x=>x.wish)});return;}
+  if(a==='wish'){const r=find();if(!r)return;const hist=(SK.checks||[]).map(x=>x.id===id?{...x,wish:!x.wish}:x);if(pc.res&&pc.res.id===id)pc.res.wish=!pc.res.wish;await skSave({...SK,checks:hist});toast(hist.find(x=>x.id===id)?.wish?'Added to wishlist':'Removed from wishlist');return;}
+  if(a==='ask'){const r=find();if(!r)return;show('skin');setTimeout(()=>{$('skChatCard')?.scrollIntoView({block:'start',behavior:'smooth'});sendChat(`I'm thinking about ${r.product_name||'a product I just checked'}${r.brand?' by '+r.brand:''} (key ingredients: ${(r.ingredients||[]).slice(0,8).map(i=>i.name).join(', ')}). How would it fit into my routine?`);},80);return;}
+  if(a==='add'){const r=find();if(!r)return;
+    const D0=n=>({note:n,source:'none',value:null});
+    const it={id:newId(),product_name:r.product_name||'Checked product',brand:r.brand||'',category:r.category||'',confidence:r.confidence||'medium',
+      description:r.verdict||'',key_ingredients:(r.ingredients||[]).map(i=>({name:i.name,purpose:i.role||''})),benefits:r.good_for||[],warnings:r.watch_out||[],
+      when_to_use:r.how_to_use?{time_of_day:r.how_to_use.time||'',frequency:r.how_to_use.frequency||'',routine_step:r.how_to_use.step||''}:{},
+      dates:{batch_code:null,best_before:D0('Not checked yet.'),expiry_date:D0('Scan the pack for an expiry date.'),manufacture_date:D0(''),pao_months:null,pao_source:'estimated',shelf_life_unopened_months:null},
+      _state:'unopened',_added:todayStr(),_scanned:todayStr(),_opened:null,_bought:todayStr(),_notes:null,barcode:r.code||undefined,notes:'Added from a product check. Open it and scan the pack to fill in dates.'};
+    await saveItem(it); await skSave({...SK,fit:{...SK.fit,[it.id]:{date:todayStr(),fit:r.fit,reason:r.verdict||''}}}); toast('Added to your shelf'); return;}
+});
+
+/* ---- weekly care plan ---- */
+function holdsOn(i,day){return productFlags(i,day).filter(f=>f.type==='now');}
+function planInputs(){
+  const T=todayStr(), days=[...Array(7)].map((_,k)=>tadd(T,k));
+  const shelf=items.filter(i=>i._state==='in_use'||(i._state==='unopened'&&catOf(i)==='Mask'));
+  return days.map(d=>({date:d,weekday:tfl(d).split(',')[0],
+    on_hold:shelf.map(i=>({i,h:holdsOn(i,d)})).filter(x=>x.h.length).map(x=>({id:x.i.id,why:[...new Set(x.h.map(h=>h.label+' — '+h.why))].join('; ')})),
+    treatment:tItems.filter(t=>t.booked===d).map(t=>t.name),
+    led:typeof lPlanned==='function'&&L?(()=>{const p=lPlanned(d);return p?LED_COLORS[p].n:null;})():null}));
+}
+function localPlan(){
+  const P=SK.profile, inp=planInputs(), use=items.filter(i=>i._state==='in_use');
+  const masks=items.filter(i=>catOf(i)==='Mask'&&i._state!=='finished');
+  const t=i=>(i.when_to_use?.time_of_day||'').toUpperCase(), isAM=i=>/AM|MORN|DAY/.test(t(i))||!/PM|NIGHT|EVEN/.test(t(i)), isPM=i=>/PM|NIGHT|EVEN/.test(t(i))||!/AM|MORN|DAY/.test(t(i));
+  const g=(i,k)=>productGroups(i).includes(k), spot=i=>/acne|spot/i.test(i.category||'');
+  const base=use.filter(i=>catOf(i)!=='Mask'&&!spot(i));
+  const retin=base.filter(i=>g(i,'retinoid')).slice(0,1);
+  let rn=0, mk=0;
+  return {created:todayStr(),source:'local',days:inp.map((d,k)=>{
+    const held=new Set(d.on_hold.map(x=>x.id)), ok=i=>!held.has(i.id);
+    const am=base.filter(i=>isAM(i)&&ok(i)&&!g(i,'retinoid')).sort((a,b)=>rank(a)-rank(b));
+    const canRet=retin.length&&ok(retin[0])&&!d.treatment.length&&(k%2===0)&&(!P.sensitive||rn<3);
+    const pmCore=base.filter(i=>isPM(i)&&ok(i)&&!g(i,'retinoid')&&!(canRet&&(g(i,'acid')||g(i,'vitc'))));
+    let night='Recovery night', extra=null;
+    if(canRet){night='Retinoid night';rn++;}
+    else if(masks.length&&mk<2&&!d.treatment.length&&k%2===1){const m=masks.find(ok);if(m){extra=m;mk++;night='Mask night';}}
+    const pm=[...pmCore,...(canRet?retin:[]),...(extra?[extra]:[])].sort((a,b)=>rank(a)-rank(b));
+    const step=i=>({product_id:i.id,step:catOf(i)||'Step',note:''});
+    return {date:d.date,focus:d.treatment.length?`${d.treatment.join(', ')} day — gentle only`:night,am:am.map(step),pm:pm.map(step),
+      extras:[...(d.led?[`💡 LED ${d.led}`]:[]),...(d.on_hold.length?[`⛔ On hold: ${d.on_hold.map(x=>items.find(i=>i.id===x.id)?.product_name).filter(Boolean).slice(0,3).join(', ')}`]:[])]};
+  }),notes:'Built on this device from your In-use products and treatment holds.'};
+}
+async function buildPlan(){
+  if(planBusy) return; planBusy=true; renderSkin();
+  let plan=null;
+  try{
+    if(sample){
+      const P=SK.profile,L0=SK.last, inp=planInputs();
+      const r=await sample.json(`You are a careful skincare planner. Build a 7-day care plan (morning and night) for this user from THEIR products only (refer to them by id). Respect every on_hold entry: never schedule a held product on that day. Alternate strong actives (retinoids, acids, vitamin C) sensibly; never layer a retinoid with acids or vitamin C on the same night; sensitive skin → retinoid at most 3 nights. Add recovery nights. Use masks 1–3 times a week on non-retinoid nights. Treatment days: gentle routine only. Keep each routine to 3–6 steps. Mention the LED session if one is planned that day.
+Today: ${todayStr()}
+Profile: ${JSON.stringify(P)}
+Latest scan: ${L0?JSON.stringify({date:L0.date,scores:L0.scores,focus:(L0.focus||[]).map(f=>f.name)}):'none'}
+Shelf: ${JSON.stringify(shelfForAI())}
+Days: ${JSON.stringify(inp)}
+Reply JSON only: {"days":[{"date":"YYYY-MM-DD","focus":"≤4 words e.g. Retinoid night","am":[{"product_id":id|null,"step":"≤3 words","note":"≤8 words or empty"}],"pm":[same],"extras":["≤8 words, e.g. LED red 10 min"]}],"notes":"≤25 words overall tip"}`,{modelTier:'complex'});
+      if(r&&Array.isArray(r.days)&&r.days.length){
+        const ids=new Set(items.map(i=>i.id)), hold=Object.fromEntries(inp.map(d=>[d.date,new Set(d.on_hold.map(x=>x.id))]));
+        r.days.forEach(d=>['am','pm'].forEach(k=>{d[k]=(d[k]||[]).filter(s=>!s.product_id||(ids.has(s.product_id)&&!hold[d.date]?.has(s.product_id)));}));
+        plan={created:todayStr(),source:'ai',days:r.days.slice(0,7),notes:r.notes||''};
+      }
+    }
+  }catch(e){ if(e&&e.code==='rate_limited') toast('Busy — built a quick plan on this device instead'); }
+  if(!plan) plan=localPlan();
+  planBusy=false; planDay=todayStr(); await skSave({...SK,plan}); toast('Your week is ready');
+}
+function planStepHTML(s){const p=s.product_id?items.find(i=>i.id===s.product_id):null;
+  return `<li>${p?`${s.step?`<b>${esc(s.step)}</b> — `:''}<button class="linkbtn" data-pid="${esc(p.id)}">${esc(p.product_name)}</button>`:`<b>${esc(s.step||'')}</b>`}${s.note?`<div class="flagwhy">${esc(s.note)}</div>`:''}</li>`;}
+function planDayHTML(d){ if(!d) return '';
+  return `<div class="routine"><div class="d"><div class="k" style="font-weight:600;font-size:13px">☀️ Morning</div>${d.am?.length?`<ol>${d.am.map(planStepHTML).join('')}</ol>`:'<p class="note" style="margin:4px 0 0">Rinse + sunscreen</p>'}</div>
+    <div class="d"><div class="k" style="font-weight:600;font-size:13px">🌙 Night</div>${d.pm?.length?`<ol>${d.pm.map(planStepHTML).join('')}</ol>`:'<p class="note" style="margin:4px 0 0">Gentle cleanse + moisturiser</p>'}</div></div>
+    ${(d.extras||[]).length?`<div class="chips" style="margin-top:8px">${d.extras.map(x=>`<span class="chip n">${esc(x)}</span>`).join('')}</div>`:''}`;}
+function planStale(p){return !p||!p.days?.length||tdiff(todayStr(),p.days[p.days.length-1].date)>0;}
+function planCardHTML(){
+  const p=SK.plan, T=todayStr(); if(!planDay||!p?.days?.some(d=>d.date===planDay)) planDay=T;
+  if(planStale(p)) return `<div class="card" id="planCard"><h3>🗓 Your weekly care plan</h3><p class="tw-sub" style="margin:0 0 10px">A 7-day morning & night plan from <b>your</b> products — it rotates actives, adds recovery and mask nights, and works around your treatment holds and LED days.</p><button class="tb primary" data-plan="build" ${planBusy?'disabled':''}>${planBusy?'Building your week…':(p?'Plan the next 7 days':'Build my week')}</button></div>`;
+  const d=p.days.find(x=>x.date===planDay)||p.days[0];
+  return `<div class="card" id="planCard"><div class="toolbar" style="margin-bottom:8px"><h3 style="margin:0">🗓 Your week</h3><button class="tb link" data-plan="build" style="padding:0" ${planBusy?'disabled':''}>${planBusy?'Rebuilding…':'Rebuild'}</button></div>
+    <div class="plan-days">${p.days.map(x=>`<button class="plan-day${x.date===d.date?' on':''}${x.date===T?' today':''}" data-plan="day" data-d="${x.date}"><span>${tfl(x.date).split(',')[0]}</span><b>${+x.date.slice(8)}</b><i>${esc((x.focus||'').split(' ')[0])}</i></button>`).join('')}</div>
+    <div class="hsite" style="margin:12px 0 8px">${esc(d.focus||'')}</div>${planDayHTML(d)}
+    ${p.notes?`<p class="note">${esc(p.notes)}</p>`:''}<p class="note" style="margin-top:4px">Made ${tf(p.created)}${p.source==='local'?' on this device':' with Skin AI'}. Rebuild after adding products or booking a treatment.</p></div>`;
+}
+function renderTodayPlan(){
+  const el=$('todayPlan'); if(!el||!SK) return; const T=todayStr(), sd=scanDue();
+  const p=SK.plan, d=!planStale(p)?p.days.find(x=>x.date===T):null;
+  el.innerHTML=`${sd&&sd.due?`<div class="card pc-nudge"><div><b>🤳 ${sd.first?'Take your first face scan':'Time for your face scan'}</b><div class="tw-sub">${sd.first?'It sets your baseline for tracking progress.':`It’s been ${sd.days} days — scanning every ${SCAN_EVERY} days shows real progress.`}</div></div><button class="tb primary" data-quick="face">Scan</button></div>`:''}
+    ${d?`<div class="card"><div class="toolbar" style="margin-bottom:8px"><h3 style="margin:0">Today’s plan · ${esc(d.focus||'')}</h3><button class="tb link" data-plan="goweek" style="padding:0">Week →</button></div>${planDayHTML(d)}</div>`
+      :`<div class="card pc-nudge"><div><b>🗓 Plan your week</b><div class="tw-sub">A day-by-day routine that works around your treatments.</div></div><button class="tb" data-plan="goweek">Build</button></div>`}`;
+}
+document.addEventListener('click',e=>{
+  const pid=e.target.closest('#todayPlan [data-pid]'); if(pid){const r=items.find(x=>x.id===pid.dataset.pid);if(r){detailId=r.id;renderDetail(r,true);}return;}
+  const b=e.target.closest('[data-plan]'); if(!b||!SK) return; const a=b.dataset.plan;
+  if(a==='build'){buildPlan();return;}
+  if(a==='day'){planDay=b.dataset.d;renderSkin();return;}
+  if(a==='goweek'){show('skin');setTimeout(()=>{$('planCard')?.scrollIntoView({block:'start',behavior:'smooth'});if(planStale(SK.plan))buildPlan();},80);return;}
+  if(a==='findopts'){const q=`Suggest 3 options for "${b.dataset.t}" that suit my skin — one budget, one mid-range, one premium. Explain the key ingredient in each and why it fits me.`;show('skin');setTimeout(()=>{$('skChatCard')?.scrollIntoView({block:'start',behavior:'smooth'});sendChat(q);},80);return;}
+});
+/* floating Ask button */
+(()=>{const f=document.createElement('button');f.id='askFab';f.setAttribute('aria-label','Ask Skin AI');f.innerHTML='💬<span>Ask</span>';document.body.appendChild(f);
+  f.onclick=()=>{show('skin');setTimeout(()=>{$('skChatCard')?.scrollIntoView({block:'start',behavior:'smooth'});$('skQ')?.focus();},80);};})();
 
 /* ================= calendar ================= */
 const TCOL=['var(--t1)','var(--t2)','var(--t3)','var(--t4)','var(--t5)','var(--t6)'];
@@ -3503,6 +3797,14 @@ renderDevCard=function(){
   renderDevCard();
   document.title='Skin Studio';
 })();
+
+/* product checker: look up ingredients by barcode in Open Beauty Facts (used by the on-device check) */
+window.ssLookupBarcode=async code=>{
+  try{const r=await fetch(`https://world.openbeautyfacts.org/api/v2/product/${encodeURIComponent(code)}.json?fields=product_name,product_name_en,brands,ingredients_text,ingredients_text_en`);
+    const j=await r.json(); if(j.status!==1||!j.product) return null; const p=j.product;
+    return {product_name:p.product_name_en||p.product_name||null,brand:(p.brands||'').split(',')[0]||null,ingredients_text:p.ingredients_text_en||p.ingredients_text||''};
+  }catch{return null;}
+};
 
 </script>
 </body>
