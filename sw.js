@@ -1,5 +1,5 @@
 /* Skin Studio offline cache */
-const CACHE='skin-studio-v6';
+const CACHE='skin-studio-v8';
 const SHELL=['./','index.html','manifest.webmanifest','icon-192.png','icon-512.png','icon-maskable-512.png','jspdf.umd.min.js',
  'face_mesh.js','face_mesh_graph.bin.wasm','face_mesh_assets.data.wasm','face_mesh_solution_packed_assets_loader.js',
  'face_mesh_solution_simd_wasm_bin.js','face_mesh_solution_simd_wasm_bin.wasm','face_mesh_solution_wasm_bin.js','face_mesh_solution_wasm_bin.wasm'];
