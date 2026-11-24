@@ -427,6 +427,7 @@ details.more summary{cursor:pointer;color:var(--accent);font-weight:600;font-siz
 .plan-day.today{border-color:var(--accent)}.plan-day.on{background:var(--accent);color:#fff;border-color:var(--accent)}.plan-day.on span,.plan-day.on i{color:#fff}
 .routine li .linkbtn{text-align:left;display:inline;padding:0}
 #pcText{font:inherit;font-size:14px;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);resize:vertical;box-sizing:border-box}
+.cam-seg{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:6px 0}.cam-seg button{font:inherit;font-size:13px;border:1px solid #2a3a52;background:transparent;color:#c9d6e6;padding:7px 12px;border-radius:999px;cursor:pointer}.cam-seg button.on{background:#5fe1ee;color:#08121e;border-color:#5fe1ee;font-weight:600}
 /* ===== Skin Studio tablet layout (Galaxy Tab S8, 11" 2560×1600) ===== */
 html{-webkit-text-size-adjust:100%}
 .src.database{background:var(--accent-soft);color:var(--accent)}
@@ -495,6 +496,8 @@ img.pimg{object-fit:contain;background:#fff;border-radius:10px;flex:none;border:
   .fs-caps{max-width:820px}
 }
 @media (min-width:1200px){.wrap{max-width:1400px}}
+
+.lv-stage.rear .lv-media{transform:none}
 
 </style>
 </head>
@@ -1830,6 +1833,10 @@ const FT=[
  {k:'up',n:'Chin up',s:'Up',tip:'Face forward and tilt your chin slightly upward.'},
  {k:'down',n:'Chin down',s:'Down',tip:'Face forward and lower your chin slightly.'}];
 const FTN=Object.fromEntries(FT.map(t=>[t.k,t]));
+let camFace=(()=>{try{return localStorage.getItem('ss-cam')==='environment'?'environment':'user';}catch{return 'user';}})();
+function applyCam(){['faceVid','facePhoto','faceCam'].forEach(id=>{const x=$(id);if(x)x.setAttribute('capture',camFace);});}
+function camToggle(){return `<div class="cam-seg"><span class="fs-dim">Camera</span><button data-fs="cam" data-c="user" class="${camFace==='user'?'on':''}">🤳 Front</button><button data-fs="cam" data-c="environment" class="${camFace==='environment'?'on':''}">📷 Back · sharper</button></div>
+  ${camFace==='environment'?'<p class="fs-dim" style="margin:4px 0 8px">Back camera has better quality. Have someone hold the camera at eye level, an arm’s length away, while you follow the voice prompts. Side profiles are much easier this way.</p>':''}`;}
 const REG={
  forehead:[10,109,67,103,54,21,251,284,332,297,338,151,108,69,104,68,71,9,337,299,333,298,301],
  nose:[168,6,197,195,5,4,1,19,94,2,98,327,129,358,49,279,64,294,48,278],
@@ -1874,8 +1881,8 @@ function tgtFit(k,p){
   if(k==='r30'&&p.yaw<=-18&&p.yaw>-38&&ap<=18) v=1-Math.abs(p.yaw+30)/14;
   if(k==='l45'&&p.yaw>=38&&p.yaw<=60&&ap<=20) v=1-Math.abs(p.yaw-46)/18;
   if(k==='r45'&&p.yaw<=-38&&p.yaw>=-60&&ap<=20) v=1-Math.abs(p.yaw+46)/18;
-  if(k==='l90'&&p.yaw>=60&&ap<=25) v=Math.min(1,(p.yaw-50)/35);
-  if(k==='r90'&&p.yaw<=-60&&ap<=25) v=Math.min(1,(-p.yaw-50)/35);
+  if(k==='l90'&&p.yaw>=55&&ap<=28) v=Math.min(1,(p.yaw-45)/30);
+  if(k==='r90'&&p.yaw<=-55&&ap<=28) v=Math.min(1,(-p.yaw-45)/30);
   if(k==='up'&&p.pitch>=14&&ay<=15) v=1-Math.abs(p.pitch-24)/22;
   if(k==='down'&&p.pitch<=-14&&ay<=15) v=1-Math.abs(p.pitch+22)/22;
   return v<0?-1:Math.max(.05,v);
@@ -1898,10 +1905,11 @@ function frameFeedback(f){
   if(!f.lm) return ['red','Face not detected — keep your whole face in view'];
   if(f.light<55) return ['yellow','Lighting is insufficient — face a window'];
   if(f.light>225) return ['yellow','Too bright — avoid direct sunlight'];
-  if(f.size<.22) return ['yellow','Move your face slightly closer'];
+  const prof=Math.abs(f.pose.yaw)>=50; // a side profile is only about half as wide as a front view
+  if(f.size<(prof?.12:.22)) return ['yellow','Move your face slightly closer'];
   if(f.size>.85) return ['yellow','Move your face slightly farther away'];
-  if(f.sharp<25) return ['yellow','Hold still — the image is blurry'];
-  if(Math.abs(f.pose.roll)>15) return ['yellow','Keep your head level'];
+  if(f.sharp<(prof?20:25)) return ['yellow','Hold still — the image is blurry'];
+  if(Math.abs(f.pose.roll)>(prof?25:15)) return ['yellow','Keep your head level'];
   return ['green',`Aligned · yaw ${Math.round(f.pose.yaw)}° · pitch ${Math.round(f.pose.pitch)}°`];
 }
 /* ---------- capabilities ---------- */
@@ -1982,8 +1990,9 @@ function renderScanner(){
       <button class="fs-btn" data-fs="consent">I agree — continue</button></div>`;
   } else if(FSO.stage==='prep'){
     body=`<div class="fs-pane">${headDemo()}<h2>Guided video scan</h2>
-      <ol class="fs-steps"><li>Prop your phone at <b>eye level</b>, an arm’s length away, facing a window.</li><li>No makeup or glasses, hair back, neutral face.</li>
-      <li>Record with the front camera: <b>look straight 2s → turn slowly left until your profile shows → back → right → back → chin up → chin down.</b></li><li>Move slowly. About 20 seconds total.</li></ol>
+      ${camToggle()}
+      <ol class="fs-steps"><li>${camFace==='environment'?'Helper holds the phone at <b>eye level</b>, an arm’s length away. Face a window.':'Prop your phone at <b>eye level</b>, an arm’s length away, facing a window.'}</li><li>No makeup or glasses, hair back, neutral face.</li>
+      <li>Record with the ${camFace==='environment'?'back':'front'} camera: <b>look straight 2s → turn slowly left until your profile shows → back → right → back → chin up → chin down.</b></li><li>Move slowly. About 20 seconds total.</li></ol>
       <button class="fs-ghost" data-fs="coach">▶ Practice with the live coach · 20s</button>
       <div class="fs-qual"><div class="fs-qh">📸 Best quality (recommended)</div>
         <div class="fs-dim" style="color:#c9d6e6">Record in your <b>iPhone Camera app</b> → Video → front camera, <b>4K</b>. Then upload it here. If iPhone asks about size, choose <b>Actual Size / Original</b>.</div>
@@ -2010,7 +2019,7 @@ function renderScanner(){
   } else if(FSO.stage==='photo'){
     const t=FT[FSO.photoStep]; const c=FSO.caps[t.k], chk=FSO.check;
     body=`<div class="fs-pane"><div class="fs-progress">${FT.map((x,i)=>`<i class="${FSO.caps[x.k]?'ok':i===FSO.photoStep?'on':''}"></i>`).join('')}</div>
-      <h2>${t.n} <span class="fs-dim">· ${t.s}</span></h2><p>${t.tip}</p>
+      <h2>${t.n} <span class="fs-dim">· ${t.s}</span></h2><p>${t.tip}</p>${FSO.photoStep===0?camToggle():''}${t.k==='l90'||t.k==='r90'?'<p class="fs-dim">Tip: turn until you see the wall beside you — an ear facing the camera is fine. Close to a profile is enough.</p>':''}
       <div class="fs-view small">${chk?`<img src="${chk.thumb}" alt="">`:headDemo()}</div>
       ${chk?`<div class="fs-fb ${chk.ok?'green':'yellow'}">${esc(chk.msg)}</div>`:''}
       ${chk&&!chk.ok?`<div class="fs-row"><label class="fs-btn" for="facePhoto">Retake</label><button class="fs-ghost" data-fs="useAnyway">Use anyway</button></div>`:`<label class="fs-btn" for="facePhoto">📷 Take ${t.n.toLowerCase()} photo</label>`}
@@ -2260,6 +2269,7 @@ document.addEventListener('click',async e=>{
   if(a==='consent'){const save=$('fs-save').checked;await skSave({...SK,consent:{at:todayStr(),savePhotos:save}});FSO.stage='prep';renderScanner();return;}
   if(a==='coach'){FSO.coachDone=false;startCoach();return;}
   if(a==='voice'){const ok=await ttsSay(PREP_TEXT);if(!ok)toast('Voice isn’t available here — follow the steps on screen');return;}
+  if(a==='cam'){camFace=b.dataset.c;try{localStorage.setItem('ss-cam',camFace);}catch{}applyCam();renderScanner();return;}
   if(a==='photos'){FSO.mode='photo';FSO.stage='photo';FSO.photoStep=0;FSO.caps={};FSO.check=null;renderScanner();ttsSay(FT[0].n+'. '+FT[0].tip);return;}
   if(a==='pskip'){nextPhoto();return;}
   if(a==='pback'){FSO.photoStep=Math.max(0,FSO.photoStep-1);FSO.check=null;renderScanner();return;}
@@ -2268,6 +2278,7 @@ document.addEventListener('click',async e=>{
   if(a==='restart'){coachRun=null;ttsStop();FSO.stage='prep';FSO.caps={};FSO.trace=null;FSO.err=null;FSO.aiPicked=false;renderScanner();return;}
   if(a==='analyze'){analyzeScan();return;}
 });
+applyCam();
 ['faceVid','faceVidGal'].forEach(id=>$(id).addEventListener('change',e=>{const f=e.target.files[0];e.target.value='';if(f)processVideo(f);}));
 ['facePhoto','facePhotoGal'].forEach(id=>$(id).addEventListener('change',e=>{const f=e.target.files[0];e.target.value='';if(f)takeAnglePhoto(f);}));
 /* ---------- practice coach (timed, animated, voice + tones) ---------- */
@@ -3354,12 +3365,14 @@ async function startLive(){
   const setMsg=(c,t)=>{LV&&(LV.msg=[c,t]);const m=$('lvMsg');if(m){m.className='lv-msg '+c;m.textContent=t;}};
   if(!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia)){FSO.stage='prep';FSO.err='This browser can’t open the camera. Open the app from your home screen (installed app) or in Chrome.';renderScanner();return;}
   let stream=null;
-  try{ stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:'user',width:{ideal:1920},height:{ideal:1440},frameRate:{ideal:30}}}); }
-  catch(e){ FSO.stage='prep'; FSO.err=e&&e.name==='NotAllowedError'?'Camera permission was blocked. Allow the camera for this app in Android settings (Apps → Skin Studio → Permissions), then try again.':'The camera couldn’t start ('+(e&&e.name||'error')+').'; renderScanner(); return; }
+  const rear=camFace==='environment';
+  try{ stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:rear?{exact:'environment'}:'user',width:{ideal:rear?2560:1920},height:{ideal:rear?1920:1440},frameRate:{ideal:30}}}); }
+  catch(e){ if(rear&&e&&e.name!=='NotAllowedError'){ try{stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1440}}});}catch{} }
+    if(!stream){ FSO.stage='prep'; FSO.err=e&&e.name==='NotAllowedError'?'Camera permission was blocked. Allow the camera for this app in Android settings (Apps → Skin Studio → Permissions), then try again.':'The camera couldn’t start ('+(e&&e.name||'error')+').'; renderScanner(); return; } }
   const pc=document.createElement('canvas'); pc.width=640; pc.height=480;
   LV={stream,track:stream.getVideoTracks()[0],pc,pg:pc.getContext('2d',{willReadFrequently:true}),busy:false,hist:[],trace:[],t0:performance.now(),
-      sm:null,lastSeen:null,lostSince:0,spoken:'',spokenAt:0,msg:['yellow','Starting camera…'],maxL:0,maxR:0,locked:false,raf:0,flashAt:0,sharpRef:0};
-  const v=$('lvVideo'); v.srcObject=stream;
+      sm:null,best:{l:null,r:null},rear,lastSeen:null,lostSince:0,spoken:'',spokenAt:0,msg:['yellow','Starting camera…'],maxL:0,maxR:0,locked:false,raf:0,flashAt:0,sharpRef:0};
+  const v=$('lvVideo'); v.srcObject=stream; v.closest('.lv-stage')?.classList.toggle('rear',rear);
   try{await v.play();}catch{}
   await new Promise(r=>{if(v.videoWidth)return r();v.onloadedmetadata=r;setTimeout(r,3000);});
   LV.pc.width=640; LV.pc.height=Math.round(640*(v.videoHeight||480)/(v.videoWidth||640));
@@ -3418,6 +3431,13 @@ function lvUpdate(f){
     LV.sharpRef=Math.max(LV.sharpRef*.995,f.sharp);
     const fb=frameFeedback(f);
     const h=LV.hist.filter(x=>now-x.t<300), speed=h.length>1?Math.abs(h[h.length-1].yaw-h[0].yaw)/Math.max(.05,(h[h.length-1].t-h[0].t)/1000):0;
+    // keep the best near-profile frame on each side, so a 90° view is captured even if it can't be held still
+    for(const side of ['l','r']){ const k=side+'90'; if(FSO.caps[k]) continue;
+      const y=side==='l'?f.pose.yaw:-f.pose.yaw, B=LV.best[side];
+      if(y>=48&&f.light>=50&&f.sharp>=18&&Math.abs(f.pose.pitch)<=28&&(!B||y>B.yaw+1)){
+        const v=$('lvVideo'),W=v.videoWidth||1280,H=v.videoHeight||960,c=B?B.c:document.createElement('canvas'); c.width=W;c.height=H;c.getContext('2d').drawImage(v,0,0,W,H);
+        LV.best[side]={yaw:y,c,f:{...f,pose:{...f.pose}}}; }
+      else if(B&&B.yaw>=54&&y<32){ lvCapture(k,B.f,false,B.c); LV.best[side]=null; return; } }
     // opportunistic captures (any angle that qualifies right now)
     if(fb[0]==='green'&&f.sharp>=Math.max(25,LV.sharpRef*.45)){
       for(const k of LV_ORDER){ if(FSO.caps[k]) continue; const fit=tgtFit(k,f.pose); const need=(k===cur)?0.45:0.7;
@@ -3434,18 +3454,21 @@ function lvUpdate(f){
     const ls=LV.lastSeen, lost=now-LV.lostSince;
     // profile fallback: tracking usually drops near a full profile
     if(ls&&lost>350&&lost<1600&&Math.abs(ls.yaw)>=50&&f.light>=50&&f.sharp>=20){
-      const k=ls.yaw>0?'l90':'r90'; if(!FSO.caps[k]&&(cur===k||cur===(ls.yaw>0?'l45':'r45'))){ lvCapture(k,f,true); return; } }
+      const k=ls.yaw>0?'l90':'r90', B=LV.best[ls.yaw>0?'l':'r'];
+      if(!FSO.caps[k]&&B&&B.yaw>=50){ lvCapture(k,B.f,false,B.c); LV.best[ls.yaw>0?'l':'r']=null; return; }
+      if(!FSO.caps[k]&&(cur===k||cur===(ls.yaw>0?'l45':'r45'))){ lvCapture(k,f,true); return; } }
     msg=lost>2500&&ls&&Math.abs(ls.yaw)>45?['yellow','Turn back toward the camera']:['red','Face not detected — center your face in the frame'];
     if(f.light<45) msg=['red','Too dark — face a window or a soft light'];
     speakTxt=msg[1];
   }
+  if(LV.rear&&(arrow==='left'||arrow==='right')) arrow=arrow==='left'?'right':'left';
   LV.msg=msg; LV.arrow=arrow;
   if(speakTxt&&speakTxt!==LV.spoken&&now-LV.spokenAt>2600){LV.spoken=speakTxt;LV.spokenAt=now;speak(speakTxt);}
   lvHUD(f);
 }
-function lvCapture(k,f,est){
-  const v=$('lvVideo'); const W=v.videoWidth||1280,H=v.videoHeight||960;
-  const c=document.createElement('canvas'); c.width=W; c.height=H; c.getContext('2d').drawImage(v,0,0,W,H);
+function lvCapture(k,f,est,src){
+  const v=$('lvVideo'); let c=src, W, H;
+  if(c){W=c.width;H=c.height;} else {W=v.videoWidth||1280;H=v.videoHeight||960; c=document.createElement('canvas'); c.width=W; c.height=H; c.getContext('2d').drawImage(v,0,0,W,H);}
   const lm=f.lm||null;
   FSO.caps[k]={img:c.toDataURL('image/jpeg',.92),lm,pose:lm?{...f.pose}:null,est:!!est,meta:{light:f.light,sharp:f.sharp,size:f.size||null},thumb:canvasJpeg(c,280,.72),w:W,h:H};
   LV.flashAt=performance.now(); LV.hist=[];
@@ -3529,7 +3552,7 @@ function renderLive(){
       <div class="lv-msg yellow" id="lvMsg">Starting camera…</div><div class="lv-arrow" id="lvArrow"><i></i><i></i><i></i></div>
       <button class="fs-x lv-close" data-fs="close" aria-label="Close">✕</button></div>
     <aside class="lv-side">
-      <div class="lv-top"><div class="fs-ring lv-ring" id="lvRing" style="--p:0"><span>0%</span></div><div><div class="fs-title">360° live scan</div><div class="fs-dim">Keep the tablet still. Turn your head slowly; each angle captures by itself.</div></div></div>
+      <div class="lv-top"><div class="fs-ring lv-ring" id="lvRing" style="--p:0"><span>0%</span></div><div><div class="fs-title">360° live scan</div><div class="fs-dim">${camFace==='environment'?'Hold the tablet steady at their eye level. They turn slowly; each angle captures by itself.':'Keep the tablet still. Turn your head slowly; each angle captures by itself.'}</div></div></div>
       <div id="lvDial"></div><div class="lv-hud" id="lvHud"></div>
       <div class="lv-steps" id="lvSteps"></div>
       <div class="fs-row" style="justify-content:space-between"><button class="fs-ghost" data-tfs="voice">${TAB.voice?'🔊 Voice on':'🔇 Voice off'}</button><button class="fs-btn" id="lvFinish" data-tfs="finish" disabled>Finish scan</button></div>
@@ -3545,10 +3568,10 @@ renderScanner=function(){
     const el=$('scanner');
     el.innerHTML=`<div class="fs-top"><button class="fs-x" data-fs="close" aria-label="Close">✕</button><div class="fs-title">360° Face Scan</div><div class="fs-badge">${fmState==='ready'?'<i class="ok"></i>Face tracking ready':fmState==='failed'?'<i class="bad"></i>Tracking unavailable':'<i></i>Loading tracking…'}</div></div>
       ${FSO.err?`<div class="fs-fb red" style="max-width:760px;margin:0 auto 12px">⚠️ ${esc(FSO.err)}</div>`:''}
-      <div class="fs-pane tab-prep">${headDemo()}<h2>Live guided scan</h2>
-        <ol class="fs-steps"><li>Stand the tablet in <b>landscape</b> on a stand or against something, camera at <b>eye level</b>, about an arm’s length away.</li>
+      <div class="fs-pane tab-prep">${headDemo()}<h2>Live guided scan</h2>${camToggle()}
+        <ol class="fs-steps"><li>${camFace==='environment'?'A helper holds the tablet in <b>landscape</b> with the back camera facing you, at <b>eye level</b>, about an arm’s length away. They see the guide on screen.':'Stand the tablet in <b>landscape</b> on a stand or against something, camera at <b>eye level</b>, about an arm’s length away.'}</li>
         <li>Face a window or soft light. No makeup or glasses, hair pulled back, neutral face.</li>
-        <li>Follow the arrows and voice: front → slowly left (30°, 45°, profile) → back → right → back → chin up → chin down.</li>
+        <li>Follow the arrows and voice: front → slowly left (30°, 45°, profile) → back → right → back → chin up → chin down. For the profile, turn until you see the wall beside you — the best side frame is kept automatically, so you don’t need to hold it.</li>
         <li>Each angle is captured automatically when it’s sharp, well lit and still. You’ll hear a chime.</li></ol>
         <button class="fs-btn" data-tfs="live">● Start live scan</button>
         <div class="fs-row"><button class="fs-link" data-tfs="voice">${TAB.voice?'🔊 Voice guidance on':'🔇 Voice guidance off'}</button><button class="fs-link" data-fs="photos">Use photos instead</button><label class="fs-link" for="faceVidGal">Upload a video</label></div>
@@ -3571,7 +3594,7 @@ document.addEventListener('click',async e=>{
   if(a==='live'){startLive();return;}
   if(a==='voice'){TAB.voice=!TAB.voice;try{localStorage.setItem('ss-voice',TAB.voice?'on':'off');}catch{} if(!TAB.voice)try{speechSynthesis.cancel();}catch{} b.textContent=b.textContent.includes('guidance')?(TAB.voice?'🔊 Voice guidance on':'🔇 Voice guidance off'):(TAB.voice?'🔊 Voice on':'🔇 Voice off'); if(TAB.voice)speak('Voice guidance on.'); return;}
   if(a==='finish'){lvFinish();return;}
-  if(a==='retake'){const k=b.dataset.k; if(FSO.caps[k]){delete FSO.caps[k]; lvSteps(); speak(FTN[k].tip);} return;}
+  if(a==='retake'){const k=b.dataset.k; if(FSO.caps[k]){delete FSO.caps[k]; if(LV&&(k==='l90'||k==='r90'))LV.best[k[0]]=null; lvSteps(); speak(FTN[k].tip);} return;}
   if(a==='sheet'){saveScanSheet(FSO.caps);return;}
   if(a==='sheetLast'){const sc=SK.scans.find(x=>x.id===SK.last.id)||{id:SK.last.id}; const caps=skSession&&skSession.id===SK.last.id?skSession.caps:await getScanImgs(sc); if(caps&&Object.keys(caps).length) saveScanSheet(caps); else toast('Photos weren’t saved for this scan'); return;}
   if(a==='copyCtx'){try{await navigator.clipboard.writeText(claudeContext());toast('Copied — paste it into Claude with your question');}catch{toast('Couldn’t copy here');} return;}
