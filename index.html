@@ -3561,7 +3561,8 @@ async function startLive(){
   setMsg('yellow','Loading face tracking…');
   try{await loadFM();}catch{ lvStop(); FSO.stage='prep'; FSO.err='Face tracking couldn’t load. Check your internet connection the first time you use the app, then try again.'; renderScanner(); return; }
   FM.reset&&FM.reset();
-  speak('Face the camera and look straight ahead.');
+  LV.startAt=performance.now()+5400;  // a moment to get into position
+  speak('Get into position. Starting in five.');
   LV.raf=requestAnimationFrame(lvLoop);
 }
 function lvStop(){
@@ -3601,7 +3602,15 @@ function lvArrow(k,p){
   const d=ty-p.yaw; if(Math.abs(d)<8) return null; return d>0?'left':'right';
 }
 function lvUpdate(f){
+  if(LV.capturing) return;
   const now=performance.now(), cur=lvCurrent();
+  if(LV.startAt&&now<LV.startAt){
+    const left=Math.ceil((LV.startAt-now)/1000);
+    if(left!==LV.counted){LV.counted=left;if(left<=5&&left>=1)speak(String(left),true);}
+    LV.msg=[f.lm?'green':'yellow',f.lm?`Hold still — starting in ${left}…`:`Center your face — starting in ${left}…`];
+    LV.arrow=null; lvHUD(f); return;
+  }
+  if(LV.startAt){LV.startAt=0;speak('Starting now. Look straight ahead.');}
   LV.trace.push({t:(now-LV.t0)/1000,yaw:f.lm?f.pose.yaw:null,pitch:f.lm?f.pose.pitch:null,sharp:f.sharp,light:f.light,size:f.size,hasLm:!!f.lm});
   if(LV.trace.length>2400) LV.trace.shift();
   let msg, arrow=null, speakTxt=null;
@@ -3647,10 +3656,30 @@ function lvUpdate(f){
   if(speakTxt&&speakTxt!==LV.spoken&&now-LV.spokenAt>2600){LV.spoken=speakTxt;LV.spokenAt=now;speak(speakTxt);}
   lvHUD(f);
 }
-function lvCapture(k,f,est,src){
-  const v=$('lvVideo'); let c=src, W, H;
+async function lvStill(){
+  // a real photo is much sharper than a video frame, which is what pore scoring needs
+  try{ if(!window.ImageCapture||!LV||!LV.track||LV.noStill) return null;
+    LV.ic=LV.ic||new ImageCapture(LV.track);
+    const blob=await Promise.race([LV.ic.takePhoto(),new Promise((_,x)=>setTimeout(()=>x(new Error('slow')),2500))]);
+    const bmp=await createImageBitmap(blob); const v=$('lvVideo');
+    // the still must frame the same view as the preview, or the landmarks won't line up
+    if(Math.abs(bmp.width/bmp.height-(v.videoWidth/v.videoHeight))>0.06||bmp.width<(v.videoWidth||0)) {LV.noStill=true;return null;}
+    const c=document.createElement('canvas'); c.width=bmp.width; c.height=bmp.height; c.getContext('2d').drawImage(bmp,0,0); bmp.close&&bmp.close();
+    return c;
+  }catch{ if(LV) LV.noStill=true; return null; }
+}
+async function lvCapture(k,f,est,src){
+  if(!LV||LV.capturing||FSO.caps[k]) return; LV.capturing=true;
+  try{ await lvCapture_(k,f,est,src); } finally { if(LV) LV.capturing=false; }
+}
+async function lvCapture_(k,f,est,src){
+  const v=$('lvVideo'); let c=src, W, H, lm=f.lm||null;
+  if(!c){ const m=$('lvMsg'); if(m){m.className='lv-msg green';m.textContent='Captured — hold still…';}
+    const still=await lvStill();
+    if(still){ let slm=null; try{slm=await detect(still);}catch{}
+      if(slm){c=still;lm=slm;} }  // landmarks re-found on the still, so crops stay accurate
+  }
   if(c){W=c.width;H=c.height;} else {W=v.videoWidth||1280;H=v.videoHeight||960; c=document.createElement('canvas'); c.width=W; c.height=H; c.getContext('2d').drawImage(v,0,0,W,H);}
-  const lm=f.lm||null;
   FSO.caps[k]={img:c.toDataURL('image/jpeg',.92),lm,pose:lm?{...f.pose}:null,est:!!est,meta:{light:f.light,sharp:f.sharp,size:f.size||null},thumb:canvasJpeg(c,280,.72),w:W,h:H};
   LV.flashAt=performance.now(); LV.hist=[];
   tone(est?660:880,.12); setTimeout(()=>tone(1175,.12),120);
@@ -3900,8 +3929,9 @@ async function deviceAnalyze(){
       if(vals.length){const worst=Object.entries(categories).filter(([k,c])=>c.regions&&c.regions[rk]!=null).sort((x,y)=>x[1].regions[rk]-y[1].regions[rk])[0];regions[rk]={score:avg(vals),note:worst?'most visible: '+(NAME[{acne:'blemishes',pigmentation:'dark_spots',wrinkles:'fine_lines'}[worst[0]]||worst[0]]||worst[0]).toLowerCase():''};}}
     const det=eyeDet!=null?eyeDet.toFixed(1):'?';
     const issue=[soft?`this photo is too soft to resolve pores or fine texture (detail ${det}, needs ${DET_MIN}+), so those two scores are left out rather than guessed - move closer, use the back camera and steady, even light`:'',
-      marginal?`the photo carries only moderate fine detail (${det}, ${DET_FULL}+ is ideal), so the pore and smoothness scores are capped at ${MARGIN_CAP} rather than reported as better than the photo can show`:'',b.w*S<560?'the face was too small or low-resolution to see pores well (move closer or use the back camera)':'',m.light<70?'the light was dim':'',m.light>210?'the light was very bright':'',m.sharp<40?'the photo was a little blurry':'',b.w<280?'the face was small in the frame':''].filter(Boolean);
-    const r={method:'device',scoring:3,detail:eyeDet!=null?+eyeDet.toFixed(2):null,quality:{ok:!issue.length,issue:issue.length?'Accuracy is lower because '+issue.join(' and ')+'.':''},skin_type:null,overall,scores,
+      b.w*S<560?'the face was too small or low-resolution to see pores well (move closer or use the back camera)':'',m.light<70?'the light was dim':'',m.light>210?'the light was very bright':'',m.sharp<40?'the photo was a little blurry':'',b.w<280?'the face was small in the frame':''].filter(Boolean);
+    const note=marginal?`Photo detail ${det} (4+ is sharpest). Pores and smoothness are measured cautiously at this detail level and held to ${MARGIN_CAP} at best - the other scores are unaffected. To sharpen them: fill more of the frame with your face and use steady, even light.`:'';
+    const r={method:'device',scoring:3,detail:eyeDet!=null?+eyeDet.toFixed(2):null,quality:{ok:!issue.length&&!marginal,issue:issue.length?'Accuracy is lower because '+issue.join(' and ')+'.':note},skin_type:null,overall,scores,
       notes:{texture:'Measured from fine detail in the front photo.',blemishes:'Individual blemishes are not measured on this tablet - scan in Claude for that.',pores:`Share of skin covered by tiny dark points, measured at ${Math.round(b.w*S)}px across the face.`,dark_spots:'Rough measure of how evenly toned the skin looks. This tablet cannot count individual dark marks reliably - scan in Claude for that.',redness:'Affected by the colour of your light.'},
       summary:`On-device measurements of your front photo. Looking best: ${ranked.slice(0,2).map(([k])=>NAME[k]).join(' and ')}. Most room to improve: ${ranked.slice(-2).reverse().map(([k])=>NAME[k]).join(' and ')}. These are relative measures for tracking change, so scan in the same place and light each time.`,
       positives:ranked.slice(0,2).map(([k,v])=>`${NAME[k]} looks good (${v})`),
@@ -4019,7 +4049,7 @@ renderDevCard=function(){
     <div class="tw-actions"><label class="tb primary" for="dataIn">⬆ Import data file</label><button class="tb" data-dev="export">⬇ Back up / export my data</button>${TAB.installEvt?'<button class="tb" data-tfs="install">📲 Install app</button>':''}</div>
     <div class="tw-actions" style="margin-top:10px;align-items:center"><span class="tw-sub">App version <b>${APP_VER}</b></span><button class="tb link" data-tfs="update">↻ Check for updates</button></div>`;
 };
-const APP_VER='1.6 (works with phone + tablet photos)';
+const APP_VER='1.7 (sharper captures + countdown)';
 async function appUpdate(){
   toast('Checking for updates…');
   try{ const reg=await navigator.serviceWorker?.getRegistration(); if(reg) await reg.update();
