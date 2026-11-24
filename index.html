@@ -428,6 +428,10 @@ details.more summary{cursor:pointer;color:var(--accent);font-weight:600;font-siz
 .routine li .linkbtn{text-align:left;display:inline;padding:0}
 #pcText{font:inherit;font-size:14px;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);resize:vertical;box-sizing:border-box}
 .cam-seg{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:6px 0}.cam-seg button{font:inherit;font-size:13px;border:1px solid #2a3a52;background:transparent;color:#c9d6e6;padding:7px 12px;border-radius:999px;cursor:pointer}.cam-seg button.on{background:#5fe1ee;color:#08121e;border-color:#5fe1ee;font-weight:600}
+.rec{border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:11px 12px;margin-top:10px}
+.rec-h{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:2px}
+.rec-opt{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0 0;margin-top:8px;border-top:1px dashed var(--line);font-size:14px}
+.rec-act{display:flex;gap:6px;flex-shrink:0}.rec-act .tb{padding:6px 10px;font-size:13px;text-decoration:none}
 /* ===== Skin Studio tablet layout (Galaxy Tab S8, 11" 2560×1600) ===== */
 html{-webkit-text-size-adjust:100%}
 .src.database{background:var(--accent-soft);color:var(--accent)}
@@ -1592,9 +1596,45 @@ function treatmentsForAI(){
   const T=todayStr();
   return tItems.map(t=>({name:t.name,last:t.lastDone||null,days_since:t.lastDone?tdiff(T,t.lastDone):null,booked:t.booked||null}));
 }
+const GRADE_BAND=[[88,98],[70,87],[50,69],[30,49],[10,29]];
+function enforceGrades(r){
+  // keep every score inside the band of its severity grade, then weight the overall toward the weakest areas
+  const G=r.grades||{};
+  Object.keys(r.scores||{}).forEach(k=>{const g=Math.round(+G[k]); if(!(g>=0&&g<=4)||G[k]==null) return; const [lo,hi]=GRADE_BAND[g]; r.scores[k]=Math.max(lo,Math.min(hi,r.scores[k]));});
+  const v=Object.values(r.scores||{}).filter(x=>x!=null); if(v.length){const mean=v.reduce((a,b)=>a+b,0)/v.length, worst=[...v].sort((a,b)=>a-b).slice(0,2); r.overall=Math.round(.65*mean+.35*(worst.reduce((a,b)=>a+b,0)/worst.length));}
+  const MAP={pores:'pores',pigmentation:'dark_spots',acne:'blemishes',redness:'redness',texture:'texture',under_eye:'under_eye',wrinkles:'fine_lines'};
+  Object.entries(MAP).forEach(([c,k])=>{if(r.categories&&r.categories[c]&&typeof r.categories[c]==='object'&&r.scores[k]!=null) r.categories[c].score=r.scores[k];});
+}
+const CROP_REG=[
+  ['left cheek',[280,330,347,346,352,376,411,425,266,371,423,426]],
+  ['right cheek',[50,101,118,117,123,147,187,205,36,142,203,206]],
+  ['nose',[1,2,4,5,6,48,64,98,115,131,168,195,197,220,278,294,327,344,360,440]],
+  ['forehead',[10,67,69,104,108,109,151,297,299,333,337,338,9,105,334]],
+  ['chin',[152,148,176,149,150,377,400,378,379,17,18,200,199,175]]];
+async function faceCrops(cap){
+  try{
+    const im=await loadImg(cap.img), W=im.naturalWidth, H=im.naturalHeight, lm=cap.lm, out=[];
+    for(const [name,idx] of CROP_REG){
+      const xs=idx.map(i=>lm[i].x*W), ys=idx.map(i=>lm[i].y*H);
+      let x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys); const pw=(x1-x0)*.2,ph=(y1-y0)*.2;
+      x0=Math.max(0,x0-pw);x1=Math.min(W,x1+pw);y0=Math.max(0,y0-ph);y1=Math.min(H,y1+ph); const cw=x1-x0,ch=y1-y0; if(cw<40||ch<40) continue;
+      const sc=Math.min(1024/Math.max(cw,ch),2), c=document.createElement('canvas'); c.width=Math.round(cw*sc); c.height=Math.round(ch*sc);
+      const g=c.getContext('2d'); g.imageSmoothingQuality='high'; g.drawImage(im,x0,y0,cw,ch,0,0,c.width,c.height);
+      out.push({name,c});
+    }
+    if(out.length<2) return [];
+    // one montage image holds up to four close-ups, so they cost a single photo slot
+    const tiles=out.slice(0,4), T=768, cols=2, rows=Math.ceil(tiles.length/2), mc=document.createElement('canvas'); mc.width=T*cols; mc.height=T*rows;
+    const mg=mc.getContext('2d'); mg.fillStyle='#111'; mg.fillRect(0,0,mc.width,mc.height); mg.imageSmoothingQuality='high';
+    tiles.forEach((t,i)=>{const x=(i%2)*T,y=Math.floor(i/2)*T,sc=Math.min(T/t.c.width,T/t.c.height),w=t.c.width*sc,h=t.c.height*sc; mg.drawImage(t.c,x+(T-w)/2,y+(T-h)/2,w,h);
+      mg.fillStyle='rgba(0,0,0,.6)'; mg.fillRect(x,y,230,34); mg.fillStyle='#fff'; mg.font='bold 20px sans-serif'; mg.fillText(t.name.toUpperCase(),x+10,y+24);});
+    return [{name:tiles.map(t=>t.name),blob:await new Promise(r=>mc.toBlob(r,'image/jpeg',.93))}].filter(x=>x.blob);
+  }catch{return [];}
+}
 function skinPrompt(n){
   const P=SK.profile, prev=SK.scans[SK.scans.length-1];
-  return `You are a kind, evidence-based skincare advisor looking at ${n} selfie photo(s) (front${n>1?', then side views':''}). You are NOT a doctor and must not diagnose conditions. Describe only what is visible and frame everything gently and non-judgementally. Never comment on attractiveness, age, weight or facial features — only skin.
+  return `You are a meticulous, evidence-based skin analyst looking at ${n} photo(s) of one person's skin. You are NOT a doctor and must not diagnose conditions. Never comment on attractiveness, age, weight or facial features — only skin.
+SCORE STRICTLY AND HONESTLY. The person explicitly wants an accurate, detailed assessment — inflated scores are useless to them. Be kind in your WORDS, never in your NUMBERS. Inspect every close-up crop at full zoom before scoring: look for each individual pore, spot, mark and bump. Do not let good lighting, a smooth-looking full-face view or the person's skin tone make you under-call what the close-ups show.
 
 Today: ${todayStr()}
 User's own profile: skin type ${P.type||'not sure'}; sensitive: ${P.sensitive?'yes':'no'}; concerns they care about: ${P.concerns.join(', ')||'none given'}; pregnant/breastfeeding: ${P.pregnant?'YES — avoid retinoids, high-dose salicylic acid, hydroquinone and anything not pregnancy-safe':'no'}.
@@ -1603,7 +1643,15 @@ Their shelf (only recommend from these by id when suitable; respect on_hold):
 ${JSON.stringify(shelfForAI())}
 Their in-clinic treatments: ${JSON.stringify(treatmentsForAI())}
 
-Scoring: each metric 0–100 where HIGHER = healthier-looking (e.g. redness 90 = very calm skin; oiliness 90 = well balanced). Be calibrated and consistent between scans; most people land 55–85. If lighting, makeup, filters or blur make a metric unreliable, still estimate but say so in quality.issue.
+Scoring: each metric 0–100 where HIGHER = healthier-looking (e.g. redness 90 = very calm skin; oiliness 90 = well balanced). First give each metric a SEVERITY GRADE, then a score inside that grade's band:
+ grade 0 = none / barely visible → 88–98 · 1 = mild → 70–87 · 2 = moderate → 50–69 · 3 = marked → 30–49 · 4 = severe → 10–29.
+Anchors:
+ pores — 0: not visible in close-ups; 1: visible only on the nose; 2: clearly visible on nose AND inner cheeks; 3: enlarged/open pores spread across cheeks, visible even in the full-face view; 4: very enlarged, dense pores over most of the cheeks and forehead.
+ dark_spots (any brown/grey marks, post-blemish marks, sun spots, freckles, patchy pigmentation, uneven tone) — 0: none; 1: 1–4 faint marks; 2: 5–15 marks or one noticeable patch; 3: 16–30 marks or several patches / clearly uneven tone; 4: more than 30 marks or large confluent patches.
+ blemishes — 0: none; 1: 1–3 small spots; 2: 4–10 or a few inflamed; 3: 11–25 or many inflamed; 4: widespread or deep/cystic.
+ texture — 0: smooth; 1: slight unevenness in close-ups; 2: visible bumps/roughness or scarring in close-ups; 3: obvious uneven texture or scarring in the full view; 4: widespread scarring or rough texture.
+ redness, oiliness, hydration, fine_lines, under_eye — same 0–4 scale of how much of the concern is visible.
+Count what you see: estimate the number of distinct dark marks and active blemishes across all images. Be consistent between scans so progress is real. If lighting, makeup, filters or blur make a metric unreliable, still grade it but say so in quality.issue.
 
 Routine: build a simple AM and PM routine. Use shelf products (product_id) where they genuinely fit; never include an on_hold product (mention it in the step "why" if relevant). For gaps, describe a product TYPE and key ingredient (no brand names). AM must end with sunscreen. Keep 3–6 steps each.
 
@@ -1611,9 +1659,11 @@ Return ONLY JSON:
 {"quality":{"ok":true,"issue":""},
  "skin_type":"oily|dry|combination|normal",
  "overall":0,
+ "grades":{"hydration":0,"texture":0,"pores":0,"redness":0,"blemishes":0,"dark_spots":0,"oiliness":0,"fine_lines":0,"under_eye":0},
  "scores":{"hydration":0,"texture":0,"pores":0,"redness":0,"blemishes":0,"dark_spots":0,"oiliness":0,"fine_lines":0,"under_eye":0},
+ "counts":{"dark_marks":0,"active_blemishes":0},
  "notes":{"hydration":"","texture":"","pores":"","redness":"","blemishes":"","dark_spots":"","oiliness":"","fine_lines":"","under_eye":""},
- "summary":"2–3 warm sentences",
+ "summary":"2–3 honest, encouraging sentences that name the main concerns plainly",
  "positives":[""],
  "focus":[{"name":"","why":"","tip":""}],
  "routine":{"am":[{"step":"Cleanse","product_id":null,"suggestion":"","why":""}],"pm":[]},
@@ -1633,7 +1683,7 @@ async function runSkinScan(){
     const r=await sample.json(skinPrompt(blobs.length),{images:blobs,modelTier:'complex'});
     if(!r||!r.scores) throw {message:'The analysis came back empty. Try again with a clearer photo.'};
     const clamp=v=>Math.max(0,Math.min(100,Math.round(+v||0)));
-    Object.keys(r.scores).forEach(k=>r.scores[k]=clamp(r.scores[k])); r.overall=clamp(r.overall);
+    Object.keys(r.scores).forEach(k=>r.scores[k]=clamp(r.scores[k])); enforceGrades(r);
     const fit={}; (r.shelf_fit||[]).forEach(f=>{if(f&&f.id)fit[f.id]={fit:f.fit,reason:f.reason,date:todayStr()};});
     const scans=SK.scans.filter(s=>s.date!==todayStr()).concat([{date:todayStr(),overall:r.overall,scores:r.scores,type:r.skin_type}]).slice(-60);
     FACE.forEach(f=>{if(skImgs[f.key])URL.revokeObjectURL(skImgs[f.key].url);}); skImgs={}; skStep=0; skSkip={};
@@ -1686,6 +1736,8 @@ function renderSkin(){
       <div class="skhead"><div class="ring ${scoreCls(L.overall)}" style="--p:${L.overall}"><span>${L.overall}</span></div>
         <div><div class="hsite" style="margin:0">${L.skin_type?esc(L.skin_type[0].toUpperCase()+L.skin_type.slice(1))+' skin':'Your skin'}</div><div class="tw-sub">Overall skin score ${dTag(od)}${prev?` vs ${tf(prev.date)}`:''}</div></div></div>
       <p style="margin:12px 0 0">${esc(L.summary||'')}</p>
+      ${L.counts&&(L.counts.dark_marks!=null||L.counts.active_blemishes!=null)?`<div class="chips" style="margin-top:10px">${L.counts.dark_marks!=null?`<span class="chip">≈ ${L.counts.dark_marks} dark marks</span>`:''}${L.counts.active_blemishes!=null?`<span class="chip">≈ ${L.counts.active_blemishes} active blemishes</span>`:''}</div>`:''}
+      ${L.scoring===2&&prev&&!prev.scoring?`<div class="banner" style="margin:10px 0 0">📏 Scoring is now stricter and uses close-ups of each area, so this scan can read lower than older ones even if your skin hasn’t changed.</div>`:''}
       ${L.sq?`<div class="chips" style="margin-top:10px"><span class="chip n">Scan quality ${L.sq.quality} · ${L.sq.label}</span><span class="chip n">Completeness ${L.sq.completeness}%</span><span class="chip n">Level 3 · ${esc(L.sq.level)}</span></div>`:''}
       ${L.quality&&L.quality.ok===false||L.quality?.issue?`<div class="banner" style="margin:10px 0 0">📸 ${esc(L.quality.issue||'Photo quality may affect accuracy.')}</div>`:''}
       ${L.see_derm?`<div class="hwarn">🩺 ${esc(L.see_derm)}</div>`:''}
@@ -1747,7 +1799,7 @@ function renderSkin(){
     <div class="chatin"><input type="text" id="skQ" placeholder="Ask anything about your skin…" ${skChatBusy?'disabled':''}><button class="tb primary" data-sact="send" ${skChatBusy?'disabled':''}>Send</button></div>
     ${skChat.length?'<button class="linkbtn" data-sact="clearChat" style="margin-top:8px;font-size:13px">Clear chat</button>':''}
     <p class="note">General skincare info, not medical advice.</p></div>`;
-  el.innerHTML=profileCard+scanCard+planCardHTML()+checkCardHTML()+resCard+cmpCard+fitCard+progCard+chatCard; renderTodayPlan();
+  el.innerHTML=profileCard+scanCard+planCardHTML()+checkCardHTML()+resCard+recsCardHTML()+cmpCard+fitCard+progCard+chatCard; renderTodayPlan();
   if(L&&L.lm){paintHeat();init3D();} if(CMP.open){paintCompare();const w=$('cmpWipe');if(w)w.oninput=()=>{CMP.wipe=+w.value;paintCompare();};['cmpA','cmpB'].forEach(id=>{const x=$(id);if(x)x.onchange=async()=>{CMP[id==='cmpA'?'a':'b']=x.value;await loadCmp();renderSkin();};});}
   const box=$('skChat'); if(box) box.scrollTop=box.scrollHeight;
   ['sp-type','sp-con'].forEach(id=>{const c=$(id);if(!c)return;c.onclick=e=>{const b=e.target.closest('.dchip');if(!b)return;if(id==='sp-con')b.classList.toggle('on');else c.querySelectorAll('.dchip').forEach(x=>x.classList.toggle('on',x===b));};});
@@ -1761,6 +1813,7 @@ function chatContext(){
 Today: ${todayStr()}
 Profile: ${JSON.stringify(P)}
 Latest face scan: ${L?JSON.stringify({date:L.date,overall:L.overall,skin_type:L.skin_type,scores:L.scores,focus:(L.focus||[]).map(f=>f.name)}):'none yet'}
+Recommendations already shown to them: ${SK.recs?JSON.stringify({buy:(SK.recs.shopping||[]).filter(x=>!x.have).map(x=>x.ingredient+': '+(x.options||[]).map(o=>o.name).join(' / ')),treatments:(SK.recs.treatments||[]).map(t=>t.name)}):'none yet'}
 Shelf: ${JSON.stringify(shelfForAI())}
 Treatments: ${JSON.stringify(treatmentsForAI().map(t=>({...t,rules:(()=>{const x=tItems.find(y=>y.name===t.name);const r=x?rulesOf(x):null;return r?Object.fromEntries(Object.entries(r.items).map(([k,v])=>[GROUPS[k].label,`${v.b}d before/${v.a}d after`])):null;})()})))}`;
 }
@@ -2230,31 +2283,34 @@ async function analyzeScan(){
   try{
     const lim=await sample.limits?.().catch(()=>null);
     if(lim&&!lim.images) throw {code:'images_unavailable'};
-    const maxN=Math.max(1,Math.min(5,lim?.images?.maxCount||5));
-    const order=['front','l45','r45','l90','r90','up','down'].filter(k=>FSO.caps[k]).slice(0,maxN);
-    const blobs=[]; for(const k of order){blobs.push(await dataUrlToBlob(await scaleDataUrl(FSO.caps[k].img,1568,.9)));}
+    const maxN=Math.max(1,Math.min(8,lim?.images?.maxCount||5));
+    const crops=FSO.caps.front&&FSO.caps.front.lm?await faceCrops(FSO.caps.front):[];
+    const plan=[['front'],...crops.map(c=>['crop',c]),['l45'],['r45'],['l90'],['r90'],['up'],['down']].filter(x=>x[0]==='crop'||FSO.caps[x[0]]).slice(0,maxN);
+    const blobs=[], labels=[];
+    for(const [k,c] of plan){ if(k==='crop'){blobs.push(c.blob);labels.push(`CLOSE-UP GRID cropped from the front photo at full resolution, tiles labelled: ${c.name.join(', ')} ("left" = the person's left). Judge pores, dark marks, blemishes and texture mainly from this image`);} else {blobs.push(await dataUrlToBlob(await scaleDataUrl(FSO.caps[k].img,1568,.92)));labels.push(FTN[k].n+(k==='front'?' (full face)':''));} }
+    const order=plan.filter(x=>x[0]!=='crop').map(x=>x[0]);
     const fr=FSO.caps.front; const geo=fr&&fr.lm?geometry(fr.lm,fr.w,fr.h):null;
     const sq=scanQuality(FSO.caps), r1=v=>v==null?null:Math.round(v*100)/100, fmeta=fr&&fr.meta?{light:r1(fr.meta.light),size:r1(fr.meta.size),sharp:r1(fr.meta.sharp),yaw:r1(fr.pose?.yaw),pitch:r1(fr.pose?.pitch)}:null;
-    const prompt=skinPrompt(blobs.length).replace('Return ONLY JSON:',`The ${blobs.length} images are, in order: ${order.map(k=>FTN[k].n).join(', ')}.
+    const prompt=skinPrompt(blobs.length).replace('Return ONLY JSON:',`The ${blobs.length} images are, in order: ${labels.map((l,i)=>(i+1)+') '+l).join('; ')}.
 Also rate visible skin per facial REGION (0–100, higher = healthier-looking) for: forehead, nose, left_cheek, right_cheek, under_eyes, chin, jawline ("left" = the person's left). Add two image-based (not measured) observations: "jawline" (definition as seen in the profile/¾ views) and "contours" (overall facial contour, cheek fullness) — neutral, factual, no beauty judgements. Pigmentation belongs in dark_spots.
 Then fill "categories" for texture, wrinkles, pores, pigmentation (dark spots, uneven tone, freckles), redness, under_eye (dark circles, lines, texture) and acne (blemishes, post-blemish marks). Each gets: an overall score, a confidence of high, medium or low (lower it when lighting, blur, makeup, hair, glasses or a missing angle limits what you can see, and mention any such obstruction in quality.issue), a one-sentence note, and a 0–100 score per facial region (leave out regions you cannot see). For wrinkles also score "areas". All scores: higher = healthier-looking. Describe appearance only; never name or infer a medical condition. "nose_profile" and "chin_projection": one neutral descriptive sentence each from the side views, or "" when there is no side view. Normal asymmetry is not a flaw; never describe it as one.
 Return ONLY JSON:`).replace('"see_derm":null}','"see_derm":null,\n "regions":{"forehead":{"score":0,"note":""},"nose":{},"left_cheek":{},"right_cheek":{},"under_eyes":{},"chin":{},"jawline":{}},\n "categories":{"texture":{"score":0,"confidence":"high|medium|low","note":"","regions":{"forehead":0,"nose":0,"left_cheek":0,"right_cheek":0,"under_eyes":0,"chin":0,"jawline":0}},"wrinkles":{"score":0,"confidence":"","note":"","regions":{},"areas":{"forehead_lines":0,"crows_feet":0,"under_eye_lines":0,"nasolabial_folds":0}},"pores":{},"pigmentation":{},"redness":{},"under_eye":{},"acne":{}},\n "observations":{"jawline":"","contours":"","nose_profile":"","chin_projection":""}}');
     const r=await sample.json(prompt,{images:blobs,modelTier:'complex'});
     if(!r||!r.scores) throw {code:'empty_completion'};
     const clamp=v=>Math.max(0,Math.min(100,Math.round(+v||0)));
-    Object.keys(r.scores).forEach(k=>r.scores[k]=clamp(r.scores[k])); r.overall=clamp(r.overall);
+    Object.keys(r.scores).forEach(k=>r.scores[k]=clamp(r.scores[k])); enforceGrades(r);
     Object.values(r.regions||{}).forEach(x=>{if(x&&x.score!=null)x.score=clamp(x.score);});
     Object.values(r.categories||{}).forEach(c=>{if(!c||typeof c!=='object')return;if(c.score!=null)c.score=clamp(c.score);for(const o of [c.regions,c.areas])if(o&&typeof o==='object')Object.keys(o).forEach(k=>o[k]=clamp(o[k]));});
     const id=todayStr()+'-'+Date.now().toString(36);
     const coverage=Object.fromEntries(FT.map(t=>[t.k,FSO.caps[t.k]?(FSO.caps[t.k].est?'est':'ok'):null]));
     const fit={}; (r.shelf_fit||[]).forEach(f=>{if(f&&f.id)fit[f.id]={fit:f.fit,reason:f.reason,date:todayStr()};});
     const savePhotos=!!(SK.consent&&SK.consent.savePhotos);
-    const summary={id,date:todayStr(),overall:r.overall,scores:r.scores,type:r.skin_type,regions:Object.fromEntries(Object.entries(r.regions||{}).map(([k,x])=>[k,x&&x.score])),geo,coverage,sq,meta:fmeta,photos:savePhotos&&skMode==='db'};
-    const last={...r,date:todayStr(),id,geo,coverage,sq,lm:fr&&fr.lm?packLm(fr.lm):null,lmw:fr?fr.w:null,lmh:fr?fr.h:null,range:FSO.range||null};
+    const summary={id,date:todayStr(),scoring:2,counts:r.counts||null,overall:r.overall,scores:r.scores,type:r.skin_type,regions:Object.fromEntries(Object.entries(r.regions||{}).map(([k,x])=>[k,x&&x.score])),geo,coverage,sq,meta:fmeta,photos:savePhotos&&skMode==='db'};
+    const last={...r,scoring:2,date:todayStr(),id,geo,coverage,sq,lm:fr&&fr.lm?packLm(fr.lm):null,lmw:fr?fr.w:null,lmh:fr?fr.h:null,range:FSO.range||null};
     skSession={id,caps:Object.fromEntries(Object.entries(FSO.caps).map(([k,c])=>[k,{img:c.img,lm:c.lm,w:c.w,h:c.h,est:c.est}]))};
     await skSave({...SK,scans:SK.scans.concat([summary]).slice(-60),last,fit:{...SK.fit,...fit},profile:{...SK.profile,type:SK.profile.type||r.skin_type}});
     if(summary.photos){const col=imgCol(); for(const [k,c] of Object.entries(FSO.caps)){ try{await col.doc(id+'_'+k).set({scan:id,angle:k,date:todayStr(),img:await scaleDataUrl(c.img,820,.8),lm:packLm(c.lm),w:c.w,h:c.h,est:!!c.est});}catch(e){} } }
-    closeScanner(); show('skin'); toast('Scan complete ✨'); ttsSay(`Your skin score is ${r.overall}.`);
+    closeScanner(); show('skin'); toast('Scan complete ✨'); ttsSay(`Your skin score is ${r.overall}.`); setTimeout(()=>buildRecs(true),400);
     setTimeout(()=>$('skResult')?.scrollIntoView({behavior:'smooth',block:'start'}),150);
   }catch(e){
     const code=e&&e.code||'error'; FSO.err=(SAMPLE_ERR[code]||((e&&e.message)||'The analysis failed.'))+` (${code})`;
@@ -2562,6 +2618,11 @@ async function downloadReport(){
   // ---- could help
   const miss=(L.missing||[]).filter(m=>m&&m.type).map(m=>wrap('-  '+m.type+(m.why?': '+m.why:''),CW-32,9.5));
   if(miss.length) card(32+18+miss.reduce((p,l)=>p+l.length*LH(9.5)+3,0),(x,yy)=>{h3('Could help (not on your shelf)',x,yy);let cy=yy+28;miss.forEach(l=>{font(9.5,'normal',C.ink);doc.text(l,x,cy);cy+=l.length*LH(9.5)+3;});});
+  // ---- recommendations
+  if(SK.recs){ const RB=(SK.recs.shopping||[]).filter(x=>!x.have).map(x=>wrap('-  '+x.ingredient+(x.concern?' ('+x.concern+')':'')+': '+x.why+(x.how?' How: '+x.how+'.':'')+((x.options||[]).length?' Examples: '+x.options.map(o=>o.name).join(' / ')+'.':''),CW-32,9.5));
+    if(RB.length) card(32+18+RB.reduce((p,l)=>p+l.length*LH(9.5)+4,0)+14,(x,yy)=>{h3('Products to consider',x,yy);let cy=yy+28;RB.forEach(l=>{font(9.5,'normal',C.ink);doc.text(l,x,cy);cy+=l.length*LH(9.5)+4;});font(7.5,'normal',C.muted);doc.text(tx('Examples only, not sponsored. Introduce one new product at a time and patch test.'),x,cy+4);});
+    const RT=(SK.recs.treatments||[]).map(t=>wrap('-  '+t.name+': '+t.why+' '+[t.sessions,t.downtime?'Downtime: '+t.downtime:''].filter(Boolean).join('; ')+'.'+(t.caution?' Caution: '+t.caution:''),CW-32,9.5));
+    if(RT.length) card(32+18+RT.reduce((p,l)=>p+l.length*LH(9.5)+4,0)+14,(x,yy)=>{h3('Treatments to discuss with your provider',x,yy);let cy=yy+28;RT.forEach(l=>{font(9.5,'normal',C.ink);doc.text(l,x,cy);cy+=l.length*LH(9.5)+4;});font(7.5,'normal',C.muted);doc.text(tx('Options to discuss with a licensed provider after an in-person assessment. Not a prescription.'),x,cy+4);}); }
   // ---- shelf fit
   const FL={great:'Great fit',good:'Good fit',caution:'Use with care',avoid:'Not a good fit'}, FC={great:C.good,good:C.good,caution:C.warn,avoid:C.bad};
   const fits=items.filter(i=>i._state!=='finished'&&SK.fit&&SK.fit[i.id]).map(i=>({n:i.product_name,f:SK.fit[i.id],l:SK.fit[i.id].reason?wrap(SK.fit[i.id].reason,CW-32,8.5):[]}));
@@ -2676,7 +2737,7 @@ async function importData(file){
   if(d.health&&H){ const h=d.health; await hSave({...H,height_cm:H.height_cm||h.height_cm,shots:mergeBy(H.shots,h.shots,s=>s.date).sort((a,b)=>a.date.localeCompare(b.date)),weights:mergeBy(H.weights,h.weights,w=>w.date).sort((a,b)=>a.date.localeCompare(b.date))}); n++; }
   if(d.skin&&SK){ const s=d.skin; const scans=mergeBy(SK.scans,s.scans,x=>x.id||x.date).sort((a,b)=>a.date.localeCompare(b.date));
     const last=!SK.last?s.last:!s.last?SK.last:(s.last.date>SK.last.date?s.last:SK.last);
-    await skSave({...SK,profile:SK.profile&&(SK.profile.type||SK.profile.concerns.length)?SK.profile:(s.profile||SK.profile),scans,last,fit:{...(s.fit||{}),...(SK.fit||{})},consent:SK.consent||s.consent||null,checks:mergeBy(SK.checks,s.checks,x=>x.id).slice(0,30),plan:(SK.plan&&s.plan&&SK.plan.created>=s.plan.created)?SK.plan:(s.plan||SK.plan||null)}); n++; }
+    await skSave({...SK,profile:SK.profile&&(SK.profile.type||SK.profile.concerns.length)?SK.profile:(s.profile||SK.profile),scans,last,fit:{...(s.fit||{}),...(SK.fit||{})},consent:SK.consent||s.consent||null,checks:mergeBy(SK.checks,s.checks,x=>x.id).slice(0,30),recs:(SK.recs&&s.recs&&SK.recs.date>=s.recs.date)?SK.recs:(s.recs||SK.recs||null),plan:(SK.plan&&s.plan&&SK.plan.created>=s.plan.created)?SK.plan:(s.plan||SK.plan||null)}); n++; }
   if(d.led&&L){ const l=d.led; await lSave({...L,goal:L.sessions.length?L.goal:l.goal,plan:L.sessions.length?L.plan:l.plan,sessions:mergeBy(L.sessions,l.sessions,x=>x.date+'|'+(x.t||'')+'|'+x.color)}); n++; }
   toast(n?'Data imported ✓':'Nothing new to import');
 }
@@ -2691,10 +2752,123 @@ $('dataIn').addEventListener('change',e=>{const f=e.target.files[0];e.target.val
 $('sheetIn').addEventListener('change',e=>{const f=e.target.files[0];e.target.value='';if(f)importScanSheet(f);});
 renderDevCard();
 
+/* ================= recommendations: products to buy + in-clinic treatments, matched to the latest scan ================= */
+var recBusy=false;
+const REC_LABEL={dark_spots:'Dark spots & marks',pores:'Enlarged pores',texture:'Texture & acne scars',blemishes:'Blemishes',oiliness:'Oil & shine',redness:'Redness',hydration:'Dryness',fine_lines:'Fine lines',under_eye:'Under-eye'};
+// ingredient picks per concern. opts = [budget, mid, premium] examples of widely sold products. preg:false = skip when pregnant/breastfeeding
+const BUY_KB={
+  dark_spots:[
+    {ing:'Azelaic acid 10%',re:/azelaic/,why:'Fades post-blemish marks and calms redness. Gentle enough for sensitive skin.',how:'PM, every other night at first',opts:['The Ordinary Azelaic Acid Suspension 10%','Paula’s Choice 10% Azelaic Acid Booster','SkinCeuticals Phyto A+ Brightening Treatment']},
+    {ing:'Tranexamic acid',re:/tranexamic/,why:'Targets stubborn brown marks and patchy tone; layers well with niacinamide.',how:'AM or PM, daily',opts:['The Inkey List Tranexamic Acid Serum','Naturium Tranexamic Topical Acid 5%','SkinCeuticals Discoloration Defense']},
+    {ing:'Niacinamide',re:/niacinamide/,why:'Evens tone, supports the barrier and helps pores.',how:'AM, daily',opts:['The Ordinary Niacinamide 10% + Zinc 1%','Paula’s Choice 10% Niacinamide Booster','SkinCeuticals Metacell Renewal B3']},
+    {ing:'Broad-spectrum sunscreen SPF 50',re:/sunscreen|\bspf\b|uv filter/,why:'The single most important step: marks darken again with sun, whatever else you use.',how:'Every morning, reapply outdoors',opts:['Beauty of Joseon Relief Sun SPF50+','La Roche-Posay Anthelios UVMune 400 SPF50+','EltaMD UV Clear SPF 46']}],
+  pores:[
+    {ing:'Salicylic acid (BHA) 2%',re:/salicylic|\bbha\b/,preg:false,why:'Oil-soluble, so it clears inside the pore and makes pores look smaller.',how:'PM, 2–3 nights a week, not on retinoid nights',opts:['The Ordinary Salicylic Acid 2% Solution','COSRX BHA Blackhead Power Liquid','Paula’s Choice Skin Perfecting 2% BHA Liquid Exfoliant']},
+    {ing:'Retinoid',re:/retin|adapalene|granactive|hydroxypinacolone/,preg:false,why:'Speeds cell turnover; the best-studied ingredient for pores and texture over months.',how:'PM, alternate nights',opts:['The Ordinary Retinol 0.5% in Squalane','Differin Gel (adapalene 0.1%)','SkinMedica Retinol Complex 0.5']}],
+  texture:[
+    {ing:'Retinoid',re:/retin|adapalene|granactive|hydroxypinacolone/,preg:false,why:'Builds collagen slowly and smooths shallow scarring and uneven texture.',how:'PM, alternate nights',opts:['The Ordinary Retinol 0.5% in Squalane','Differin Gel (adapalene 0.1%)','SkinMedica Retinol Complex 0.5']},
+    {ing:'Gentle AHA / PHA exfoliant',re:/lactic acid|mandelic|gluconolactone|\bpha\b|glycolic/,why:'Smooths surface roughness. Lactic, mandelic or PHA are the gentler choices for sensitive skin.',how:'PM, once a week, not on retinoid nights',opts:['The Ordinary Lactic Acid 5% + HA','The Inkey List PHA Toner','Paula’s Choice 6% Mandelic + 2% Lactic Acid Liquid Exfoliant']}],
+  blemishes:[
+    {ing:'Adapalene 0.1%',re:/adapalene|differin/,preg:false,why:'A retinoid made for acne: prevents clogged pores and the marks they leave.',how:'PM, thin layer, alternate nights',opts:['Differin Gel (adapalene 0.1%)','La Roche-Posay Effaclar Adapalene Gel 0.1%','']},
+    {ing:'Hydrocolloid pimple patches',re:/hydrocolloid|pimple patch/,why:'Protect a spot from picking, which is what causes most dark marks.',how:'On active spots, overnight',opts:['COSRX Acne Pimple Master Patch','Hero Mighty Patch Original','']}],
+  oiliness:[
+    {ing:'Niacinamide',re:/niacinamide/,why:'Helps balance oil through the day.',how:'AM, daily',opts:['The Ordinary Niacinamide 10% + Zinc 1%','Paula’s Choice 10% Niacinamide Booster','']},
+    {ing:'Clay mask',re:/clay|kaolin|bentonite/,why:'Absorbs excess oil in the T-zone.',how:'Once a week, T-zone only',opts:['Innisfree Super Volcanic Pore Clay Mask','Kiehl’s Rare Earth Deep Pore Cleansing Mask','']}],
+  redness:[
+    {ing:'Centella / panthenol barrier balm',re:/centella|madecassoside|cica|panthenol/,why:'Calms irritation and supports the barrier.',how:'AM & PM',opts:['SKIN1004 Madagascar Centella Ampoule','La Roche-Posay Cicaplast Baume B5+','']}],
+  hydration:[
+    {ing:'Ceramide moisturiser',re:/ceramide/,why:'Repairs the barrier so skin holds water.',how:'AM & PM, last step before SPF',opts:['CeraVe Moisturizing Cream','AESTURA Atobarrier365 Cream','SkinCeuticals Triple Lipid Restore 2:4:2']},
+    {ing:'Gentle low-pH cleanser',re:/cleanser|cleansing/,not:/\boil\b|balm|huile/,why:'Cleans without stripping, so the rest of your routine stings less.',how:'AM & PM (second cleanse at night)',opts:['CeraVe Hydrating Facial Cleanser','La Roche-Posay Toleriane Hydrating Gentle Cleanser','']}],
+  fine_lines:[
+    {ing:'Retinoid',re:/retin|adapalene|granactive|hydroxypinacolone/,preg:false,why:'The best-studied topical for fine lines.',how:'PM, alternate nights',opts:['The Ordinary Retinol 0.5% in Squalane','Differin Gel (adapalene 0.1%)','SkinMedica Retinol Complex 0.5']},
+    {ing:'Peptide serum',re:/peptide|matrixyl/,why:'Supports firmness with very little irritation.',how:'AM or PM',opts:['The Ordinary Multi-Peptide + HA Serum','COSRX The 6 Peptide Skin Booster Serum','']}],
+  under_eye:[
+    {ing:'Caffeine eye serum',re:/caffeine/,why:'Temporarily reduces puffiness and the look of darkness.',how:'AM, tap in gently',opts:['The Ordinary Caffeine Solution 5% + EGCG','The Inkey List Caffeine Eye Cream','']}]
+};
+const TX_KB=[
+  {k:'mn',name:'Microneedling',re:/microneedl|dermapen|skin ?pen/,not:/\brf\b|radio/,t:{texture:1,pores:.8,dark_spots:.3},why:'Tiny controlled punctures trigger new collagen, softening shallow acne scars and refining pores. It has a low risk of pigment problems in medium and deeper skin tones.',sessions:'3–6 sessions, 4–6 weeks apart',downtime:'1–3 days of redness',caution:'Not over active acne or cold sores. Pause retinoids and acids around each session.',min:28,max:42},
+  {k:'rf',name:'RF microneedling',re:/\brf\b|radiofrequency|radio frequency|morpheus|virtue|potenza|genius/,t:{texture:1,pores:1,fine_lines:.5},why:'Microneedling plus radiofrequency heat at depth, for more collagen remodelling. Used for acne scars and enlarged pores.',sessions:'3–4 sessions, 4–6 weeks apart',downtime:'2–5 days of redness and swelling',caution:'Tell your provider about isotretinoin use, keloids or cold sores.',min:28,max:42},
+  {k:'peel',name:'Superficial chemical peel',re:/peel/,t:{dark_spots:.9,pores:.6,blemishes:.7,oiliness:.6,texture:.4},why:'Salicylic, glycolic or mandelic peels speed up cell turnover to fade surface marks and unclog pores.',sessions:'4–6 peels, 2–4 weeks apart',downtime:'0–5 days of flaking',caution:'Peels can themselves leave dark marks on medium and deeper skin tones, so start gentle and be strict with sunscreen.',min:14,max:28},
+  {k:'laser',name:'Pigment laser (pico or Q-switched)',re:/pico|q-?switch|toning|brown spot|pigment laser|deka/,t:{dark_spots:1},why:'Breaks up discrete brown spots that creams don’t shift.',sessions:'2–6 sessions, about 4 weeks apart',downtime:'0–7 days; spots darken, then flake',caution:'Higher risk of rebound darkening on medium and deeper skin tones and with melasma. Ask for a test spot first.',min:28,max:42},
+  {k:'boost',name:'Skin booster (PDRN / polynucleotide)',re:/rejuran|pdrn|polynucleotide|skin ?booster|profhilo/,t:{hydration:.8,texture:.5,fine_lines:.5,under_eye:.5},why:'Injected under the skin to support repair, hydration and resilience in scarred or dull areas.',sessions:'3 sessions, 3–4 weeks apart',downtime:'1–3 days of small bumps',caution:'Not during pregnancy or breastfeeding.',min:21,max:35},
+  {k:'facial',name:'Deep-cleansing facial (e.g. HydraFacial)',re:/hydrafacial|facial|extraction/,t:{pores:.6,oiliness:.7,blemishes:.5,hydration:.3},why:'Clears congestion and oil with no real downtime. Good upkeep between stronger treatments.',sessions:'About once a month',downtime:'None',caution:'',min:28,max:42},
+  {k:'sub',name:'Subcision or TCA CROSS for deeper scars',re:/subcision|tca cross/,t:{texture:1},minNeed:22,why:'For scars microneedling can’t lift: subcision releases tethered rolling scars, and TCA CROSS rebuilds narrow boxcar or ice-pick scars.',sessions:'1–3 sessions, 6–8 weeks apart',downtime:'3–7 days of bruising or scabs',caution:'Doctor-performed. Dark marks afterwards are common and usually fade.',min:42,max:56},
+  {k:'vasc',name:'Vascular laser or IPL',re:/vascular|\bipl\b|pulsed dye|vbeam/,t:{redness:1},minNeed:15,why:'Targets visible redness and small vessels.',sessions:'2–4 sessions, 4 weeks apart',downtime:'0–3 days',caution:'IPL is risky on medium and deeper skin tones. Ask what device suits your tone.',min:28,max:42},
+  {k:'tox',name:'Neurotoxin for expression lines',re:/botox|tox|dysport|xeomin/,t:{fine_lines:1},minNeed:12,why:'Softens lines that come from movement (forehead, frown, crow’s feet).',sessions:'Every 3–4 months',downtime:'None',caution:'Not during pregnancy or breastfeeding.',min:90,max:120}
+];
+function ownedFor(re,not){return items.find(i=>i._state!=='finished'&&re.test(productText(i))&&!(not&&not.test((i.product_name||'').toLowerCase())))||null;}
+function txHave(name){const n=(name||'').toLowerCase(), kb=TX_KB.find(x=>x.re.test(n)&&!(x.not&&x.not.test(n)));
+  return tItems.find(t=>{const tn=(t.name||'').toLowerCase(); return kb?(kb.re.test(tn)&&!(kb.not&&kb.not.test(tn))):tn.includes(n.split(/[ (]/)[0]);})||null;}
+function localRecs(){
+  const L0=SK.last, P=SK.profile, S=L0.scores||{}, need=k=>Math.max(0,72-(S[k]??100));
+  const order=Object.keys(REC_LABEL).filter(k=>need(k)>=4).sort((a,b)=>need(b)-need(a));
+  const shopping=[], seen=new Set();
+  for(const k of order){ for(const e of BUY_KB[k]||[]){ if(seen.has(e.ing)) continue; if(P.pregnant&&e.preg===false) continue; if(/adapalene/i.test(e.ing)&&ownedFor(/retin|granactive|hydroxypinacolone|adapalene/)) continue; const have=ownedFor(e.re,e.not); seen.add(e.ing);
+      shopping.push({concern:REC_LABEL[k],ingredient:e.ing,why:e.why+(P.sensitive&&/salicylic|aha|retinoid|adapalene/i.test(e.ing)?' Go slowly: your skin is sensitive.':''),how:e.how,have:have?have.id:null,
+        options:have?[]:e.opts.filter(Boolean).map((n,i)=>({tier:['Budget','Mid-range','Premium'][i],name:n}))}); if(shopping.filter(x=>x.concern===REC_LABEL[k]).length>=2) break; } }
+  const buy=shopping.filter(x=>!x.have).slice(0,5), own=shopping.filter(x=>x.have).slice(0,4);
+  const treatments=TX_KB.map(x=>({x,s:Object.entries(x.t).reduce((p,[k,w])=>p+need(k)*w,0)})).filter(o=>o.s>=(o.x.minNeed||10)&&!(P.pregnant&&/pregnan/.test(o.x.caution))).sort((a,b)=>b.s-a.s).slice(0,4)
+    .map(({x})=>({name:x.name,targets:Object.keys(x.t).filter(k=>need(k)>=4).map(k=>REC_LABEL[k]),why:x.why,sessions:x.sessions,downtime:x.downtime,caution:x.caution,interval:{min:x.min,max:x.max}}));
+  return {date:todayStr(),scanId:L0.id,source:'local',shopping:[...buy,...own],treatments,notes:'Matched to your lowest scores on this device.'};
+}
+async function buildRecs(quiet){
+  if(recBusy||!SK.last) return; recBusy=true; if(!quiet) renderSkin();
+  let recs=null;
+  try{ if(sample){ const L0=SK.last,P=SK.profile;
+    const r=await sample.json(`You are an experienced skincare and aesthetics advisor. Using this person's latest skin scan, recommend (1) products they could BUY and (2) in-clinic TREATMENTS to discuss with a provider. Be specific and honest; this is cosmetic guidance, not a diagnosis or prescription.
+Today: ${todayStr()}
+Profile: ${JSON.stringify(P)}
+Scan (${L0.date}; scores 0–100, higher = healthier-looking): ${JSON.stringify({overall:L0.overall,scores:L0.scores,notes:L0.notes,focus:L0.focus,counts:L0.counts||null,regions:L0.regions,categories:L0.categories?Object.fromEntries(Object.entries(L0.categories).map(([k,c])=>[k,c&&c.note])):null,see_derm:L0.see_derm||null})}
+Products they already own: ${JSON.stringify(shelfForAI())}
+Treatments they already have: ${JSON.stringify(treatmentsForAI())}
+Rules for PRODUCTS: 3–5 items, most impactful first, only for concerns scoring under about 72. Recommend by active INGREDIENT first, then give up to 3 real, widely sold example products (Budget / Mid-range / Premium) you are confident exist; leave an option out when unsure. If something they own already covers an ingredient, do not tell them to buy it again — set "have" to that shelf id and leave options empty. Daily sunscreen is the foundation for dark marks. Respect sensitive skin (start low, alternate nights) and pregnancy/breastfeeding (no retinoids, hydroquinone or high-strength salicylic acid). Never mention prices or shops. Say how each fits their existing routine without clashing (e.g. not on retinoid nights).
+Rules for TREATMENTS: 2–4 options, best match first, chosen for what the scan shows: e.g. shallow acne scarring and enlarged pores → microneedling or RF microneedling; discrete brown spots → pigment laser or superficial peels; congestion → peels or deep-cleansing facials; dull, dehydrated or scarred skin → skin boosters. If they already do a matching treatment, include it and say it is a good fit to continue. State typical sessions, spacing and downtime. Always give the main caution, especially that peels and lasers can themselves cause dark marks on medium and deeper skin tones, and anything to confirm with the provider first (active acne, isotretinoin, cold sores, keloids, pregnancy). No device brand names.
+Reply JSON only: {"shopping":[{"concern":"","ingredient":"","why":"≤22 words, tied to their scan","how":"AM/PM + frequency, ≤12 words","have":null,"options":[{"tier":"Budget|Mid-range|Premium","name":"Brand Product"}]}],
+"treatments":[{"name":"","targets":["concern"],"why":"≤28 words tied to their scan","sessions":"","downtime":"","caution":"≤25 words","interval":{"min":28,"max":42}}],"notes":"≤30 words: what to start first"}`,{modelTier:'complex'});
+    if(r&&(Array.isArray(r.shopping)||Array.isArray(r.treatments))){ const ids=new Set(items.map(i=>i.id));
+      recs={date:todayStr(),scanId:L0.id,source:'ai',notes:r.notes||'',
+        shopping:(r.shopping||[]).filter(x=>x&&x.ingredient).slice(0,6).map(x=>({concern:x.concern||'',ingredient:x.ingredient,why:x.why||'',how:x.how||'',have:ids.has(x.have)?x.have:null,options:(x.options||[]).filter(o=>o&&o.name).slice(0,3).map(o=>({tier:o.tier||'',name:o.name}))})),
+        treatments:(r.treatments||[]).filter(x=>x&&x.name).slice(0,4).map(x=>({name:x.name,targets:(x.targets||[]).slice(0,4),why:x.why||'',sessions:x.sessions||'',downtime:x.downtime||'',caution:x.caution||'',interval:{min:+x.interval?.min||28,max:+x.interval?.max||42}}))}; } } }
+  catch(e){ if(!quiet&&e&&e.code==='rate_limited') toast('Busy — using quick on-device recommendations'); }
+  if(!recs) recs=localRecs();
+  recBusy=false; await skSave({...SK,recs}); if(!quiet) toast('Your recommendations are ready');
+}
+function recsCardHTML(){
+  const L0=SK.last; if(!L0) return ''; const R=SK.recs;
+  if(!R) return `<div class="card" id="recCard"><h3>🎯 What to buy & treatments to consider</h3><p class="tw-sub" style="margin:0 0 10px">Get products matched to this scan (by ingredient, with budget to premium examples) and in-clinic treatments worth discussing — it skips what you already own.</p><button class="tb primary" data-rec="build" ${recBusy?'disabled':''}>${recBusy?'Working it out…':'Get my recommendations'}</button></div>`;
+  const stale=R.scanId!==L0.id;
+  const buy=(R.shopping||[]).filter(x=>!x.have), own=(R.shopping||[]).filter(x=>x.have);
+  return `<div class="card" id="recCard"><div class="toolbar" style="margin-bottom:6px"><h3 style="margin:0">🛍 What to buy</h3><button class="tb link" data-rec="build" style="padding:0" ${recBusy?'disabled':''}>${recBusy?'Updating…':stale?'Update for latest scan':'Refresh'}</button></div>
+    ${R.notes?`<p style="margin:0 0 10px">${esc(R.notes)}</p>`:''}
+    ${buy.map((x,k)=>`<div class="rec"><div class="rec-h"><b>${esc(x.ingredient)}</b>${x.concern?`<span class="chip n">${esc(x.concern)}</span>`:''}</div>
+      <div class="tw-sub">${esc(x.why)}</div>${x.how?`<div class="flagwhy">How: ${esc(x.how)}</div>`:''}
+      ${(x.options||[]).map(o=>`<div class="rec-opt"><span><span class="tw-sub">${esc(o.tier)}</span><br><b>${esc(o.name)}</b></span><span class="rec-act"><button class="tb" data-rec="check" data-n="${esc(o.name)}">Check fit</button><button class="tb" data-rec="wish" data-n="${esc(o.name)}" data-w="${esc(x.why)}" aria-label="Add to wishlist">♡</button><a class="tb" target="_blank" rel="noopener" href="https://www.google.com/search?q=${encodeURIComponent(o.name)}">Find</a></span></div>`).join('')}</div>`).join('')||'<p class="tw-sub">Nothing new to buy right now — your shelf already covers your main concerns.</p>'}
+    ${own.length?`<h3 style="margin-top:14px">Already on your shelf</h3><ul>${own.map(x=>{const it=items.find(i=>i.id===x.have);return it?`<li><b>${esc(x.ingredient)}</b> — <button class="linkbtn" data-pid="${esc(it.id)}">${esc(it.product_name)}</button><div class="flagwhy">${esc(x.how||x.why)}</div></li>`:'';}).join('')}</ul>`:''}
+    <p class="note">Examples only: not sponsored, and I can’t check prices or stock. Add one new product at a time and patch test first.</p>
+    <h3 style="margin-top:18px">✨ Treatments to consider</h3>
+    ${(R.treatments||[]).map(t=>{const h=txHave(t.name);return `<div class="rec"><div class="rec-h"><b>${esc(t.name)}</b>${h?`<span class="badge xs b-good">✓ In your treatments</span>`:''}</div>
+      ${(t.targets||[]).length?`<div class="chips" style="margin:4px 0">${t.targets.map(c=>`<span class="chip n">${esc(c)}</span>`).join('')}</div>`:''}
+      <div class="tw-sub">${esc(t.why)}</div>
+      <div class="flagwhy">${[t.sessions,t.downtime?'Downtime: '+t.downtime:''].filter(Boolean).map(esc).join(' · ')}</div>
+      ${t.caution?`<div class="flagwhy">⚠️ ${esc(t.caution)}</div>`:''}
+      ${h?`<div class="flagwhy">${h.booked?'Next booked '+tf(h.booked):h.lastDone?'Last done '+tf(h.lastDone):''}</div>`:`<button class="tb" data-rec="track" data-n="${esc(t.name)}" data-min="${t.interval?.min||28}" data-max="${t.interval?.max||42}" style="margin-top:8px">＋ Track this treatment</button>`}</div>`;}).join('')||'<p class="tw-sub">No in-clinic treatment stands out from this scan.</p>'}
+    <p class="note">Options to discuss with a licensed provider, who should examine your skin first — not a prescription. ${R.source==='local'?'Matched on this device from your scores.':'Written by Skin AI from your '+tf(R.date)+' results.'}</p></div>`;
+}
+document.addEventListener('click',async e=>{
+  const b=e.target.closest('[data-rec]'); if(!b||!SK) return; const a=b.dataset.rec, n=b.dataset.n;
+  if(a==='build'){buildRecs();return;}
+  if(a==='check'){pc.text=n;pc.imgs=[];pc.res=null;renderSkin();const t=$('pcText');if(t)t.value=n;runCheck();return;}
+  if(a==='wish'){ if((SK.checks||[]).some(x=>x.wish&&x.product_name===n)){toast('Already on your wishlist');return;}
+    const w={id:newId(),date:todayStr(),product_name:n,brand:'',category:'',fit:'good',match:null,verdict:b.dataset.w||'',wish:true,ingredients:[],flags:{},ingredients_source:'not checked yet',confidence:'low'};
+    await skSave({...SK,checks:[w].concat(SK.checks||[]).slice(0,30)}); toast('Added to wishlist'); return;}
+  if(a==='track'){ if(!tcol){toast('Treatments aren’t available yet');return;}
+    try{await tcol.add({name:n,minDays:+b.dataset.min||28,maxDays:+b.dataset.max||42,lastDone:null,history:[],booked:null,created:todayStr()});toast(`Added ${n} to Treatments`);renderSkin();}catch{toast('Couldn’t add it. Try again.');} return;}
+});
+
 /* ================= Lóvi-style extras: product & ingredient checker, weekly care plan, scan reminders ================= */
 const SCAN_EVERY=10;
-let pc={busy:false,imgs:[],text:'',res:null,err:'',open:null,code:null};
-let planBusy=false, planDay=null;
+var pc={busy:false,imgs:[],text:'',res:null,err:'',open:null,code:null};
+var planBusy=false, planDay=null;
 function scanDue(){ if(!SK) return null; const L=SK.last; if(!L) return {first:true,due:true};
   const days=tdiff(todayStr(),L.date); return {days,due:days>=SCAN_EVERY,next:tadd(L.date,SCAN_EVERY)}; }
 
@@ -3575,7 +3749,7 @@ renderScanner=function(){
         <li>Each angle is captured automatically when it’s sharp, well lit and still. You’ll hear a chime.</li></ol>
         <button class="fs-btn" data-tfs="live">● Start live scan</button>
         <div class="fs-row"><button class="fs-link" data-tfs="voice">${TAB.voice?'🔊 Voice guidance on':'🔇 Voice guidance off'}</button><button class="fs-link" data-fs="photos">Use photos instead</button><label class="fs-link" for="faceVidGal">Upload a video</label></div>
-        <p class="fs-dim">Everything is processed on this tablet. Analysis here uses on-device measurements; for Claude’s full AI analysis, save a scan sheet afterwards and import it in Skin Studio in Claude.</p></div>`;
+        <p class="fs-dim">App version ${APP_VER}. Everything is processed on this tablet. Analysis here uses on-device measurements; for Claude’s full AI analysis, save a scan sheet afterwards and import it in Skin Studio in Claude.</p></div>`;
     return;
   }
   _renderScanner();
@@ -3598,6 +3772,7 @@ document.addEventListener('click',async e=>{
   if(a==='sheet'){saveScanSheet(FSO.caps);return;}
   if(a==='sheetLast'){const sc=SK.scans.find(x=>x.id===SK.last.id)||{id:SK.last.id}; const caps=skSession&&skSession.id===SK.last.id?skSession.caps:await getScanImgs(sc); if(caps&&Object.keys(caps).length) saveScanSheet(caps); else toast('Photos weren’t saved for this scan'); return;}
   if(a==='copyCtx'){try{await navigator.clipboard.writeText(claudeContext());toast('Copied — paste it into Claude with your question');}catch{toast('Couldn’t copy here');} return;}
+  if(a==='update'){appUpdate();return;}
   if(a==='install'){if(TAB.installEvt){TAB.installEvt.prompt();TAB.installEvt=null;renderDevCard();} return;}
 });
 /* open straight into the tablet flow */
@@ -3607,12 +3782,12 @@ openScanner=function(){_openScanner(); loadFM().then(()=>{if(FSO.stage==='prep')
 /* ---------- on-device skin analysis ---------- */
 function labArrays(canvas){
   const W=canvas.width,H=canvas.height,d=canvas.getContext('2d',{willReadFrequently:true}).getImageData(0,0,W,H).data,n=W*H;
-  const Lr=new Float32Array(n),A=new Float32Array(n),lin=labArrays.lin||(labArrays.lin=Float32Array.from({length:256},(_,i)=>{const c=i/255;return c<=.04045?c/12.92:Math.pow((c+.055)/1.055,2.4);}));
+  const Lr=new Float32Array(n),A=new Float32Array(n),Bv=new Float32Array(n),lin=labArrays.lin||(labArrays.lin=Float32Array.from({length:256},(_,i)=>{const c=i/255;return c<=.04045?c/12.92:Math.pow((c+.055)/1.055,2.4);}));
   const fn=t=>t>.008856?Math.cbrt(t):7.787*t+16/116;
   for(let i=0;i<n;i++){const r=lin[d[i*4]],g=lin[d[i*4+1]],b=lin[d[i*4+2]];
     const X=(.4124*r+.3576*g+.1805*b)/.95047,Y=.2126*r+.7152*g+.0722*b,fy=fn(Y);
-    Lr[i]=116*fy-16; A[i]=500*(fn(X)-fy);}
-  return {L:Lr,A};
+    Lr[i]=116*fy-16; A[i]=500*(fn(X)-fy); Bv[i]=200*(fy-fn((.0193*r+.1192*g+.9505*b)/1.08883));}
+  return {L:Lr,A,B:Bv};
 }
 function blurCanvas(src,r){const c=document.createElement('canvas');c.width=src.width;c.height=src.height;const g=c.getContext('2d');g.filter=`blur(${r}px)`;g.drawImage(src,0,0);return c;}
 function polyMask(W,H,draw){const c=document.createElement('canvas');c.width=W;c.height=H;const g=c.getContext('2d');g.fillStyle='#fff';g.strokeStyle='#fff';draw(g);const d=g.getImageData(0,0,W,H).data,m=new Uint8Array(W*H);for(let i=0;i<m.length;i++)m[i]=d[i*4+3]>127?1:0;return m;}
@@ -3625,13 +3800,13 @@ async function deviceAnalyze(){
   try{
     if(!window.FACEMESH_TESSELATION) await loadFMScript();
     const im=await loadImg(fr.img), IW=im.naturalWidth, IH=im.naturalHeight, lm=fr.lm;
-    const b=bboxOf(lm,IW,IH), S=Math.min(1.6,420/b.w), mx=b.w*.12, my=b.h*.1;
+    const b=bboxOf(lm,IW,IH), S=Math.min(1.6,860/b.w), KS=Math.max(.6,b.w*S/420), PXMM=140/(b.w*S), mx=b.w*.12, my=b.h*.1;
     const cx=Math.max(0,b.x-mx), cy=Math.max(0,b.y-my), cw=Math.min(IW-cx,b.w+2*mx), ch=Math.min(IH-cy,b.h+2*my);
     const W=Math.round(cw*S), H=Math.round(ch*S);
     const c0=document.createElement('canvas'); c0.width=W; c0.height=H; c0.getContext('2d').drawImage(im,cx,cy,cw,ch,0,0,W,H);
     const P=i=>[(lm[i].x*IW-cx)*S,(lm[i].y*IH-cy)*S];
-    const c1=blurCanvas(c0,1), c2=blurCanvas(c0,4), c4=blurCanvas(c0,10), c3=blurCanvas(c0,18);
-    const L0=labArrays(c0).L, B1=labArrays(c1), B2=labArrays(c2), L4=labArrays(c4).L, B3=labArrays(c3), L1=B1.L, L2=B2.L, L3=B3.L, A2=B2.A, A3=B3.A;
+    const c1=blurCanvas(c0,1*KS), c2=blurCanvas(c0,4*KS), c4=blurCanvas(c0,10*KS), c3=blurCanvas(c0,18*KS), cf=blurCanvas(c0,Math.max(.5,.42*KS)), cp=blurCanvas(c0,2.2*KS);
+    const L0=labArrays(c0).L, Lf=labArrays(cf).L, Lp=labArrays(cp).L, B1=labArrays(c1), B2=labArrays(c2), L4=labArrays(c4).L, B3=labArrays(c3), L1=B1.L, L2=B2.L, L3=B3.L, A2=B2.A, A3=B3.A;
     // masks
     const ovalIdx=(OVAL_IDX()||[]);
     const fillHull=(g,idx)=>{const h=hull(idx.map(P));g.beginPath();h.forEach((p,i)=>i?g.lineTo(p[0],p[1]):g.moveTo(p[0],p[1]));g.closePath();g.fill();};
@@ -3649,18 +3824,33 @@ async function deviceAnalyze(){
     const fl=[]; for(let i=0;i<face.length;i+=7) if(face[i]&&!excl[i]) fl.push(L2[i]); fl.sort((a,b2)=>a-b2); const medL=fl.length?fl[fl.length>>1]:60;
     const skin=i=>face[i]&&!excl[i]&&L2[i]>medL-28&&L2[i]>18;
     const kL=Math.min(1.8,Math.max(.6,65/Math.max(1,medL))); // brightness normalisation
+    const SPOT_T=window.__SPOT_T||[2.6,2.0,9,9];
+    const N=W*H, SKIN=new Uint8Array(N); for(let i=0;i<N;i++) SKIN[i]=skin(i)?1:0;
+    // dark marks: connected darker blobs of a plausible size and shape (not shadows, hairs or folds)
+    const cand=new Uint8Array(N); for(let i=0;i<N;i++) if(SKIN[i]&&((L4[i]-L2[i])*kL>SPOT_T[0]||(L2[i]-Lp[i])*kL>SPOT_T[1])) cand[i]=1;
+    const lab=new Int32Array(N), comps=[null], stack=new Int32Array(N);
+    for(let i0=0;i0<N;i0++){ if(!cand[i0]||lab[i0]) continue; const id=comps.length; let sp=0,area=0,x0=W,x1=0,y0=H,y1=0,sx=0,sy=0,dep=0,rough=0,edgeTouch=0,chr=0; stack[sp++]=i0; lab[i0]=id;
+      while(sp){const i=stack[--sp],x=i%W,y=(i-x)/W; area++; sx+=x; sy+=y; dep+=(L4[i]-Lp[i])*kL; rough+=Math.abs(Lf[i]-Lp[i])*kL; chr+=(A2[i]-A3[i])+(B2.B[i]-B3.B[i]); if((x>0&&!SKIN[i-1])||(x<W-1&&!SKIN[i+1])||(y>0&&!SKIN[i-W])||(y<H-1&&!SKIN[i+W])) edgeTouch++; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y;
+        if(x>0&&cand[i-1]&&!lab[i-1]){lab[i-1]=id;stack[sp++]=i-1;} if(x<W-1&&cand[i+1]&&!lab[i+1]){lab[i+1]=id;stack[sp++]=i+1;}
+        if(y>0&&cand[i-W]&&!lab[i-W]){lab[i-W]=id;stack[sp++]=i-W;} if(y<H-1&&cand[i+W]&&!lab[i+W]){lab[i+W]=id;stack[sp++]=i+W;}}
+      const bw=x1-x0+1,bh=y1-y0+1,mm2=area*PXMM*PXMM,asp=Math.max(bw,bh)/Math.min(bw,bh);
+      comps.push({ok:mm2>=.6&&mm2<=30&&asp<=3.2&&area/(bw*bh)>=.3&&!edgeTouch&&dep/area>=2.5&&rough/area<=4.0,c:Math.round(sy/area)*W+Math.round(sx/area),mm2,dep:dep/area,rough:rough/area,chr:chr/area,asp,edgeTouch}); }
+    const SPOT=new Uint8Array(N); for(let i=0;i<N;i++) if(lab[i]&&comps[lab[i]].ok) SPOT[i]=1;
     const stat=m=>{let n=0,tex=0,dots=0,spots=0,dv=0,dv2=0,red=0,aM=0,blem=0,shine=0,edge=0,edgeH=0,l3=0;
-      for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=y*W+x; if(!m[i]||!skin(i)) continue; n++;
-        tex+=Math.abs(L0[i]-L2[i])*kL; if((L2[i]-L0[i])*kL>3.5) dots++; if((L4[i]-L2[i])*kL>4) spots++;
+      for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=y*W+x; if(!m[i]||!SKIN[i]) continue; n++;
+        tex+=Math.abs(Lf[i]-L2[i])*kL; if((Lp[i]-Lf[i])*kL>2.4) dots++; if(SPOT[i]) spots++;
         const dd=(L2[i]-L4[i])*kL; dv+=dd; dv2+=dd*dd; aM+=A2[i]; if(A2[i]-A3[i]>4) red++; if(A2[i]-A3[i]>6&&L3[i]-L2[i]>1.5) blem++;
-        if(L0[i]>86&&L0[i]-L3[i]>8) shine++; l3+=L3[i];
-        const gx=(L1[i+1]-L1[i-1])*kL, gy=(L1[i+W]-L1[i-W])*kL, mg=Math.hypot(gx,gy); if(mg>7){edge++; if(Math.abs(gy)>1.8*Math.abs(gx)) edgeH++;}}
-      if(n<120) return null; const mean=dv/n;
-      return {n,tex:tex/n,dots:dots/n,spots:spots/n,uneven:Math.sqrt(Math.max(0,dv2/n-mean*mean)),red:red/n,a:aM/n,blem:blem/n,shine:shine/n,edge:edge/n,edgeH:edgeH/n,L:l3/n}; };
+        if(Lf[i]>86&&Lf[i]-L3[i]>8) shine++; l3+=L3[i];
+        const gx=(L1[i+1]-L1[i-1])*kL*KS, gy=(L1[i+W]-L1[i-W])*kL*KS, mg=Math.hypot(gx,gy); if(mg>7){edge++; if(Math.abs(gy)>1.8*Math.abs(gx)) edgeH++;}}
+      if(n<120*KS*KS) return null; const mean=dv/n; let marks=0; for(let c=1;c<comps.length;c++) if(comps[c].ok&&m[comps[c].c]) marks++;
+      return {n,marks,tex:tex/n,dots:dots/n,spots:spots/n,uneven:Math.sqrt(Math.max(0,dv2/n-mean*mean)),red:red/n,a:aM/n,blem:blem/n,shine:shine/n,edge:edge/n,edgeH:edgeH/n,L:l3/n}; };
     const R={}; for(const k of Object.keys(masks)) R[k]=stat(masks[k]);
-    window.__devStats=R;
+    const cnt=new Set(); for(const k of ['forehead','left_cheek','right_cheek','chin']) if(masks[k]) for(let c=1;c<comps.length;c++) if(comps[c].ok&&masks[k][comps[c].c]) cnt.add(c);
+    const darkMarks=cnt.size;
+    window.__devStats=R; window.__devInfo={KS,W,H,PXMM,darkMarks,comps:[...cnt].map(c=>({mm2:+comps[c].mm2.toFixed(1),dep:+comps[c].dep.toFixed(1),rough:+comps[c].rough.toFixed(2),chr:+comps[c].chr.toFixed(2)}))};
+    const TH=window.__TH||{tex:[1.1,3.4],pore:[.015,.16],spot:[.004,.05],unev:[1.0,3.0]};
     const sco={
-      texture:v=>sc01(v.tex,1.1,3.4), pores:v=>sc01(v.dots,.035,.17), pigmentation:v=>Math.round((sc01(v.spots,.01,.07)+sc01(v.uneven,1.0,3.0))/2),
+      texture:v=>sc01(v.tex,TH.tex[0],TH.tex[1]), pores:v=>sc01(v.dots,TH.pore[0],TH.pore[1]), pigmentation:v=>Math.round(.6*sc01(v.spots,TH.spot[0],TH.spot[1])+.4*sc01(v.uneven,TH.unev[0],TH.unev[1])),
       redness:v=>Math.round((sc01(v.a,9,22)+sc01(v.red,.02,.13))/2), acne:v=>sc01(v.blem,.002,.03), oil:v=>sc01(v.shine,.004,.05), lines:v=>sc01(v.edge,.02,.13), linesH:v=>sc01(v.edgeH,.008,.06)};
     const RG={texture:['forehead','nose','left_cheek','right_cheek','chin'],pores:['nose','left_cheek','right_cheek','forehead'],pigmentation:['forehead','left_cheek','right_cheek','chin'],
       redness:['forehead','nose','left_cheek','right_cheek','chin'],acne:['forehead','left_cheek','right_cheek','chin','jawline'],oil:['forehead','nose','chin']};
@@ -3668,6 +3858,8 @@ async function deviceAnalyze(){
     for(const [c,rs] of Object.entries(RG)){const regs={};rs.forEach(r=>{if(R[r])regs[r]=sco[c](R[r]);});cat[c]={score:avg(Object.values(regs)),regions:regs};}
     const cheekL=avg([R.left_cheek&&R.left_cheek.L,R.right_cheek&&R.right_cheek.L]), ueL=R.under_eyes?R.under_eyes.L:null;
     const ue=ueL!=null&&cheekL!=null?sc01(cheekL-ueL,2,13):null;
+    // many separate dark marks cap the even-tone score, whatever their total area
+    if(cat.pigmentation.score!=null){const cap=darkMarks>24?35:darkMarks>12?49:darkMarks>7?69:100; cat.pigmentation.score=Math.min(cat.pigmentation.score,cap);}
     cat.under_eye={score:ue,regions:ue!=null?{under_eyes:ue}:{}};
     const areas={}; if(R.forehead)areas.forehead_lines=sco.linesH(R.forehead); if(R.crows)areas.crows_feet=sco.lines(R.crows); if(R.under_eyes)areas.under_eye_lines=sco.lines(R.under_eyes); if(R.naso)areas.nasolabial_folds=sco.lines(R.naso);
     cat.wrinkles={score:avg(Object.values(areas)),regions:{...(areas.forehead_lines!=null?{forehead:areas.forehead_lines}:{}),...(areas.under_eye_lines!=null?{under_eyes:areas.under_eye_lines}:{})},areas};
@@ -3684,12 +3876,12 @@ async function deviceAnalyze(){
       blemishes:'Avoid picking; spot-treat active blemishes and keep pillowcases and phone screens clean.',oiliness:'A lightweight, non-comedogenic moisturizer and blotting during the day help with shine.',
       fine_lines:'Sunscreen every day, and a retinoid when your treatments allow, support smoother-looking skin.',under_eye:'Sleep, hydration and a gentle eye cream can help the under-eye area look brighter.'};
     const ranked=Object.entries(scores).sort((x,y)=>y[1]-x[1]);
-    const overall=avg(Object.values(scores));
+    const overall=(()=>{const v=Object.values(scores),mean=v.reduce((p,q)=>p+q,0)/v.length,w=[...v].sort((x,y)=>x-y).slice(0,2);return Math.round(.65*mean+.35*(w.reduce((p,q)=>p+q,0)/w.length));})();
     const regions={}; for(const rk of Object.keys(REG)){const vals=Object.values(categories).map(c=>c.regions&&c.regions[rk]).filter(v=>v!=null); if(cat.oil.regions[rk]!=null)vals.push(cat.oil.regions[rk]);
       if(vals.length){const worst=Object.entries(categories).filter(([k,c])=>c.regions&&c.regions[rk]!=null).sort((x,y)=>x[1].regions[rk]-y[1].regions[rk])[0];regions[rk]={score:avg(vals),note:worst?'most visible: '+(NAME[{acne:'blemishes',pigmentation:'dark_spots',wrinkles:'fine_lines'}[worst[0]]||worst[0]]||worst[0]).toLowerCase():''};}}
-    const issue=[m.light<70?'the light was dim':'',m.light>210?'the light was very bright':'',m.sharp<40?'the photo was a little blurry':'',b.w<280?'the face was small in the frame':''].filter(Boolean);
-    const r={method:'device',quality:{ok:!issue.length,issue:issue.length?'Accuracy is lower because '+issue.join(' and ')+'.':''},skin_type:null,overall,scores,
-      notes:{texture:'Measured from fine detail in the front photo.',redness:'Affected by the colour of your light.'},
+    const issue=[b.w*S<560?'the face was too small or low-resolution to see pores well (move closer or use the back camera)':'',m.light<70?'the light was dim':'',m.light>210?'the light was very bright':'',m.sharp<40?'the photo was a little blurry':'',b.w<280?'the face was small in the frame':''].filter(Boolean);
+    const r={method:'device',scoring:2,counts:{dark_marks:darkMarks},quality:{ok:!issue.length,issue:issue.length?'Accuracy is lower because '+issue.join(' and ')+'.':''},skin_type:null,overall,scores,
+      notes:{texture:'Measured from fine detail in the front photo.',pores:`Share of skin covered by tiny dark points, measured at ${Math.round(b.w*S)}px across the face.`,dark_spots:`About ${darkMarks} separate darker marks found on the forehead, cheeks, nose, chin and jaw.`,redness:'Affected by the colour of your light.'},
       summary:`On-device measurements of your front photo. Looking best: ${ranked.slice(0,2).map(([k])=>NAME[k]).join(' and ')}. Most room to improve: ${ranked.slice(-2).reverse().map(([k])=>NAME[k]).join(' and ')}. These are relative measures for tracking change, so scan in the same place and light each time.`,
       positives:ranked.slice(0,2).map(([k,v])=>`${NAME[k]} looks good (${v})`),
       focus:ranked.slice(-2).reverse().map(([k,v])=>({name:NAME[k],why:`Score ${v} — the lowest of your measures this scan.`,tip:TIP[k]})),
@@ -3702,12 +3894,12 @@ async function finishScan(r){
   const fmeta=fr&&fr.meta?{light:r1(fr.meta.light),size:r1(fr.meta.size),sharp:r1(fr.meta.sharp),yaw:r1(fr.pose?.yaw),pitch:r1(fr.pose?.pitch)}:null;
   const id=todayStr()+'-'+Date.now().toString(36), coverage=Object.fromEntries(FT.map(t=>[t.k,FSO.caps[t.k]?(FSO.caps[t.k].est?'est':'ok'):null]));
   const savePhotos=!!(SK.consent&&SK.consent.savePhotos);
-  const summary={id,date:todayStr(),method:r.method||'ai',overall:r.overall,scores:r.scores,type:r.skin_type,regions:Object.fromEntries(Object.entries(r.regions||{}).map(([k,x])=>[k,x&&x.score])),geo,coverage,sq,meta:fmeta,photos:savePhotos&&skMode==='db'};
+  const summary={id,date:todayStr(),method:r.method||'ai',scoring:r.scoring||null,counts:r.counts||null,overall:r.overall,scores:r.scores,type:r.skin_type,regions:Object.fromEntries(Object.entries(r.regions||{}).map(([k,x])=>[k,x&&x.score])),geo,coverage,sq,meta:fmeta,photos:savePhotos&&skMode==='db'};
   const last={...r,date:todayStr(),id,geo,coverage,sq,lm:fr&&fr.lm?packLm(fr.lm):null,lmw:fr?fr.w:null,lmh:fr?fr.h:null,range:FSO.range||null};
   skSession={id,caps:Object.fromEntries(Object.entries(FSO.caps).map(([k,c])=>[k,{img:c.img,lm:c.lm,w:c.w,h:c.h,est:c.est}]))};
   await skSave({...SK,scans:SK.scans.concat([summary]).slice(-60),last,profile:{...SK.profile}});
   if(summary.photos){const col=imgCol(); for(const [k,c] of Object.entries(FSO.caps)){ try{await col.doc(id+'_'+k).set({scan:id,angle:k,date:todayStr(),img:await scaleDataUrl(c.img,820,.8),lm:packLm(c.lm),w:c.w,h:c.h,est:!!c.est});}catch(e){} } }
-  closeScanner(); show('skin'); toast('Scan complete ✨'); speak(`Your skin score is ${r.overall}.`);
+  closeScanner(); show('skin'); toast('Scan complete ✨'); speak(`Your skin score is ${r.overall}.`); setTimeout(()=>{if(typeof buildRecs==='function')buildRecs(true);},400);
   setTimeout(()=>$('skResult')?.scrollIntoView({behavior:'smooth',block:'start'}),150);
 }
 const _analyzeScan=analyzeScan;
@@ -3803,8 +3995,17 @@ renderDevCard=function(){
   const el=$('devCard'); if(!el) return;
   el.innerHTML=`<h3>Data & devices</h3>
     <p class="note" style="margin-top:0">Your data is saved only on this tablet. To bring in everything from Skin Studio in Claude, open it in Claude → Today → <b>Export my data</b>, then import the file here. Importing only adds or updates — it never deletes.</p>
-    <div class="tw-actions"><label class="tb primary" for="dataIn">⬆ Import data file</label><button class="tb" data-dev="export">⬇ Back up / export my data</button>${TAB.installEvt?'<button class="tb" data-tfs="install">📲 Install app</button>':''}</div>`;
+    <div class="tw-actions"><label class="tb primary" for="dataIn">⬆ Import data file</label><button class="tb" data-dev="export">⬇ Back up / export my data</button>${TAB.installEvt?'<button class="tb" data-tfs="install">📲 Install app</button>':''}</div>
+    <div class="tw-actions" style="margin-top:10px;align-items:center"><span class="tw-sub">App version <b>${APP_VER}</b></span><button class="tb link" data-tfs="update">↻ Check for updates</button></div>`;
 };
+const APP_VER='1.4 (stricter scan + recommendations)';
+async function appUpdate(){
+  toast('Checking for updates…');
+  try{ const reg=await navigator.serviceWorker?.getRegistration(); if(reg) await reg.update();
+    await fetch('index.html',{cache:'reload'}); await fetch('sw.js',{cache:'reload'});
+    const ks=await caches.keys(); await Promise.all(ks.filter(k=>k!=='skin-studio-fonts').map(k=>caches.delete(k))); }catch{}
+  location.reload();
+}
 
 /* ---------- boot ---------- */
 (function(){
@@ -3816,7 +4017,7 @@ renderDevCard=function(){
   const sb=document.querySelector('#v-shelf .btn[onclick="startScan()"]'); if(sb) sb.textContent='▥ Add a product';
   const _show=show; show=function(v){if(v!=='add')bcStop();return _show(v);};
   window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();TAB.installEvt=e;renderDevCard();});
-  if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+  if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).then(r=>r.update()).catch(()=>{}); let _sw=!!navigator.serviceWorker.controller; navigator.serviceWorker.addEventListener('controllerchange',()=>{ if(_sw&&!window.__swReloaded&&!(typeof FSO!=='undefined'&&FSO.open)){window.__swReloaded=1;location.reload();} _sw=true; });
   renderDevCard();
   document.title='Skin Studio';
 })();
