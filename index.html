@@ -1608,7 +1608,7 @@ function enforceGrades(r){
 const CROP_REG=[
   ['left cheek',[280,330,347,346,352,376,411,425,266,371,423,426]],
   ['right cheek',[50,101,118,117,123,147,187,205,36,142,203,206]],
-  ['nose',[1,2,4,5,6,48,64,98,115,131,168,195,197,220,278,294,327,344,360,440]],
+  ['nose',[1,2,4,5,6,19,45,94,97,98,99,129,275,326,327,328,358]],
   ['forehead',[10,67,69,104,108,109,151,297,299,333,337,338,9,105,334]],
   ['chin',[152,148,176,149,150,377,400,378,379,17,18,200,199,175]]];
 async function faceCrops(cap){
@@ -1617,7 +1617,11 @@ async function faceCrops(cap){
     for(const [name,idx] of CROP_REG){
       const xs=idx.map(i=>lm[i].x*W), ys=idx.map(i=>lm[i].y*H);
       let x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys); const pw=(x1-x0)*.2,ph=(y1-y0)*.2;
-      x0=Math.max(0,x0-pw);x1=Math.min(W,x1+pw);y0=Math.max(0,y0-ph);y1=Math.min(H,y1+ph); const cw=x1-x0,ch=y1-y0; if(cw<40||ch<40) continue;
+      x0=Math.max(0,x0-pw);x1=Math.min(W,x1+pw);y0=Math.max(0,y0-ph);y1=Math.min(H,y1+ph);
+      // square the crop around its centre so each tile uses the whole square
+      const side=Math.min(Math.max(x1-x0,y1-y0),W,H), mx2=(x0+x1)/2, my2=(y0+y1)/2;
+      x0=Math.max(0,Math.min(W-side,mx2-side/2)); y0=Math.max(0,Math.min(H-side,my2-side/2)); x1=x0+side; y1=y0+side;
+      const cw=x1-x0,ch=y1-y0; if(cw<40||ch<40) continue;
       const sc=Math.min(1024/Math.max(cw,ch),2), c=document.createElement('canvas'); c.width=Math.round(cw*sc); c.height=Math.round(ch*sc);
       const g=c.getContext('2d'); g.imageSmoothingQuality='high'; g.drawImage(im,x0,y0,cw,ch,0,0,c.width,c.height);
       out.push({name,c});
@@ -1627,14 +1631,17 @@ async function faceCrops(cap){
     const tiles=out.slice(0,4), T=768, cols=2, rows=Math.ceil(tiles.length/2), mc=document.createElement('canvas'); mc.width=T*cols; mc.height=T*rows;
     const mg=mc.getContext('2d'); mg.fillStyle='#111'; mg.fillRect(0,0,mc.width,mc.height); mg.imageSmoothingQuality='high';
     tiles.forEach((t,i)=>{const x=(i%2)*T,y=Math.floor(i/2)*T,sc=Math.min(T/t.c.width,T/t.c.height),w=t.c.width*sc,h=t.c.height*sc; mg.drawImage(t.c,x+(T-w)/2,y+(T-h)/2,w,h);
-      mg.fillStyle='rgba(0,0,0,.6)'; mg.fillRect(x,y,230,34); mg.fillStyle='#fff'; mg.font='bold 20px sans-serif'; mg.fillText(t.name.toUpperCase(),x+10,y+24);});
+      mg.font='bold 20px sans-serif'; const lab=t.name.toUpperCase(), lw=mg.measureText(lab).width+20;
+      mg.fillStyle='rgba(0,0,0,.6)'; mg.fillRect(x,y,lw,32); mg.fillStyle='#fff'; mg.fillText(lab,x+10,y+22);});
     return [{name:tiles.map(t=>t.name),blob:await new Promise(r=>mc.toBlob(r,'image/jpeg',.93))}].filter(x=>x.blob);
   }catch{return [];}
 }
 function skinPrompt(n){
   const P=SK.profile, prev=SK.scans[SK.scans.length-1];
   return `You are a meticulous, evidence-based skin analyst looking at ${n} photo(s) of one person's skin. You are NOT a doctor and must not diagnose conditions. Never comment on attractiveness, age, weight or facial features — only skin.
-SCORE STRICTLY AND HONESTLY. The person explicitly wants an accurate, detailed assessment — inflated scores are useless to them. Be kind in your WORDS, never in your NUMBERS. Inspect every close-up crop at full zoom before scoring: look for each individual pore, spot, mark and bump. Do not let good lighting, a smooth-looking full-face view or the person's skin tone make you under-call what the close-ups show.
+SCORE STRICTLY AND HONESTLY. The person explicitly wants an accurate, detailed assessment — inflated scores are useless to them. Be kind in your WORDS, never in your NUMBERS.
+Method, in this order: (1) Look at the CLOSE-UP GRID first, if there is one, and count what you actually see in each tile — individual pores, brown marks, bumps, scars. (2) Only then look at the full-face and angled views, for distribution and for anything the crops miss. (3) Score from the close-ups. A face that looks even at arm's length but shows dense, open pores or scattered brown marks in the close-ups is NOT mild — score what the close-ups show. Good lighting, a flattering full-face view, sheen, or the person's skin tone must never soften the number.
+If the close-ups are too soft or low-resolution to resolve pores and fine texture, do not score them as healthy: set those scores no higher than 70, say plainly in quality.issue that the photo could not resolve them, and set that category's confidence to low.
 
 Today: ${todayStr()}
 User's own profile: skin type ${P.type||'not sure'}; sensitive: ${P.sensitive?'yes':'no'}; concerns they care about: ${P.concerns.join(', ')||'none given'}; pregnant/breastfeeding: ${P.pregnant?'YES — avoid retinoids, high-dose salicylic acid, hydroquinone and anything not pregnancy-safe':'no'}.
@@ -1646,7 +1653,7 @@ Their in-clinic treatments: ${JSON.stringify(treatmentsForAI())}
 Scoring: each metric 0–100 where HIGHER = healthier-looking (e.g. redness 90 = very calm skin; oiliness 90 = well balanced). First give each metric a SEVERITY GRADE, then a score inside that grade's band:
  grade 0 = none / barely visible → 88–98 · 1 = mild → 70–87 · 2 = moderate → 50–69 · 3 = marked → 30–49 · 4 = severe → 10–29.
 Anchors:
- pores — 0: not visible in close-ups; 1: visible only on the nose; 2: clearly visible on nose AND inner cheeks; 3: enlarged/open pores spread across cheeks, visible even in the full-face view; 4: very enlarged, dense pores over most of the cheeks and forehead.
+ pores — 0: not visible even in the close-ups; 1: a few visible on the nose only; 2: clearly visible on the nose AND inner cheeks in close-up; 3: open, enlarged pores covering much of the cheeks in close-up, or visible in the full-face view; 4: very enlarged, dense pores over most of the cheeks and forehead. Dense stippling across a cheek close-up is grade 3, not grade 1.
  dark_spots (any brown/grey marks, post-blemish marks, sun spots, freckles, patchy pigmentation, uneven tone) — 0: none; 1: 1–4 faint marks; 2: 5–15 marks or one noticeable patch; 3: 16–30 marks or several patches / clearly uneven tone; 4: more than 30 marks or large confluent patches.
  blemishes — 0: none; 1: 1–3 small spots; 2: 4–10 or a few inflamed; 3: 11–25 or many inflamed; 4: widespread or deep/cystic.
  texture — 0: smooth; 1: slight unevenness in close-ups; 2: visible bumps/roughness or scarring in close-ups; 3: obvious uneven texture or scarring in the full view; 4: widespread scarring or rough texture.
@@ -3824,53 +3831,59 @@ async function deviceAnalyze(){
     const fl=[]; for(let i=0;i<face.length;i+=7) if(face[i]&&!excl[i]) fl.push(L2[i]); fl.sort((a,b2)=>a-b2); const medL=fl.length?fl[fl.length>>1]:60;
     const skin=i=>face[i]&&!excl[i]&&L2[i]>medL-28&&L2[i]>18;
     const kL=Math.min(1.8,Math.max(.6,65/Math.max(1,medL))); // brightness normalisation
-    const SPOT_T=window.__SPOT_T||[2.6,2.0,9,9];
+    const T=Object.assign({mmMin:.6,mmMax:30,asp:3.2,dep:2.5,rough:4.0,t1:2.6,t2:2.0,chr:-99,wide:0},window.__TUNE||{});
+    const SPOT_T=[T.t1,T.t2];
     const N=W*H, SKIN=new Uint8Array(N); for(let i=0;i<N;i++) SKIN[i]=skin(i)?1:0;
     // dark marks: connected darker blobs of a plausible size and shape (not shadows, hairs or folds)
-    const cand=new Uint8Array(N); for(let i=0;i<N;i++) if(SKIN[i]&&((L4[i]-L2[i])*kL>SPOT_T[0]||(L2[i]-Lp[i])*kL>SPOT_T[1])) cand[i]=1;
+    const cand=new Uint8Array(N); for(let i=0;i<N;i++) if(SKIN[i]&&((T.wide?L3[i]-L2[i]:L4[i]-L2[i])*kL>SPOT_T[0])) cand[i]=1;
     const lab=new Int32Array(N), comps=[null], stack=new Int32Array(N);
     for(let i0=0;i0<N;i0++){ if(!cand[i0]||lab[i0]) continue; const id=comps.length; let sp=0,area=0,x0=W,x1=0,y0=H,y1=0,sx=0,sy=0,dep=0,rough=0,edgeTouch=0,chr=0; stack[sp++]=i0; lab[i0]=id;
-      while(sp){const i=stack[--sp],x=i%W,y=(i-x)/W; area++; sx+=x; sy+=y; dep+=(L4[i]-Lp[i])*kL; rough+=Math.abs(Lf[i]-Lp[i])*kL; chr+=(A2[i]-A3[i])+(B2.B[i]-B3.B[i]); if((x>0&&!SKIN[i-1])||(x<W-1&&!SKIN[i+1])||(y>0&&!SKIN[i-W])||(y<H-1&&!SKIN[i+W])) edgeTouch++; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y;
+      while(sp){const i=stack[--sp],x=i%W,y=(i-x)/W; area++; sx+=x; sy+=y; dep+=((T.wide?L3[i]:L4[i])-Lp[i])*kL; rough+=Math.abs(Lf[i]-Lp[i])*kL; chr+=(A2[i]-A3[i])+(B2.B[i]-B3.B[i]); if((x>0&&!SKIN[i-1])||(x<W-1&&!SKIN[i+1])||(y>0&&!SKIN[i-W])||(y<H-1&&!SKIN[i+W])) edgeTouch++; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y;
         if(x>0&&cand[i-1]&&!lab[i-1]){lab[i-1]=id;stack[sp++]=i-1;} if(x<W-1&&cand[i+1]&&!lab[i+1]){lab[i+1]=id;stack[sp++]=i+1;}
         if(y>0&&cand[i-W]&&!lab[i-W]){lab[i-W]=id;stack[sp++]=i-W;} if(y<H-1&&cand[i+W]&&!lab[i+W]){lab[i+W]=id;stack[sp++]=i+W;}}
       const bw=x1-x0+1,bh=y1-y0+1,mm2=area*PXMM*PXMM,asp=Math.max(bw,bh)/Math.min(bw,bh);
-      comps.push({ok:mm2>=.6&&mm2<=30&&asp<=3.2&&area/(bw*bh)>=.3&&!edgeTouch&&dep/area>=2.5&&rough/area<=4.0,c:Math.round(sy/area)*W+Math.round(sx/area),mm2,dep:dep/area,rough:rough/area,chr:chr/area,asp,edgeTouch}); }
+      comps.push({ok:mm2>=T.mmMin&&mm2<=T.mmMax&&asp<=T.asp&&area/(bw*bh)>=.3&&!edgeTouch&&dep/area>=T.dep&&rough/area<=T.rough&&chr/area>=T.chr,c:Math.round(sy/area)*W+Math.round(sx/area),mm2,dep:dep/area,rough:rough/area,chr:chr/area,asp,edgeTouch}); }
     const SPOT=new Uint8Array(N); for(let i=0;i<N;i++) if(lab[i]&&comps[lab[i]].ok) SPOT[i]=1;
-    const stat=m=>{let n=0,tex=0,dots=0,spots=0,dv=0,dv2=0,red=0,aM=0,blem=0,shine=0,edge=0,edgeH=0,l3=0;
+    const stat=m=>{let n=0,tex=0,dots=0,spots=0,dv=0,dv2=0,w1=0,w2=0,red=0,aM=0,blem=0,shine=0,edge=0,edgeH=0,l3=0;
       for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=y*W+x; if(!m[i]||!SKIN[i]) continue; n++;
         tex+=Math.abs(Lf[i]-L2[i])*kL; if((Lp[i]-Lf[i])*kL>2.4) dots++; if(SPOT[i]) spots++;
-        const dd=(L2[i]-L4[i])*kL; dv+=dd; dv2+=dd*dd; aM+=A2[i]; if(A2[i]-A3[i]>4) red++; if(A2[i]-A3[i]>6&&L3[i]-L2[i]>1.5) blem++;
-        if(Lf[i]>86&&Lf[i]-L3[i]>8) shine++; l3+=L3[i];
+        const dd=(L2[i]-L4[i])*kL; dv+=dd; dv2+=dd*dd; const dw=(L2[i]-L3[i])*kL; w1+=dw; w2+=dw*dw; aM+=A2[i]; if(A2[i]-A3[i]>4) red++; if(A2[i]-A3[i]>6&&L3[i]-L2[i]>1.5) blem++;
+        if(Lf[i]-L3[i]>7&&Lf[i]>medL+7) shine++; l3+=L3[i];
         const gx=(L1[i+1]-L1[i-1])*kL*KS, gy=(L1[i+W]-L1[i-W])*kL*KS, mg=Math.hypot(gx,gy); if(mg>7){edge++; if(Math.abs(gy)>1.8*Math.abs(gx)) edgeH++;}}
-      if(n<120*KS*KS) return null; const mean=dv/n; let marks=0; for(let c=1;c<comps.length;c++) if(comps[c].ok&&m[comps[c].c]) marks++;
-      return {n,marks,tex:tex/n,dots:dots/n,spots:spots/n,uneven:Math.sqrt(Math.max(0,dv2/n-mean*mean)),red:red/n,a:aM/n,blem:blem/n,shine:shine/n,edge:edge/n,edgeH:edgeH/n,L:l3/n}; };
+      if(n<120*KS*KS) return null; const mean=dv/n, meanW=w1/n; let marks=0; for(let c=1;c<comps.length;c++) if(comps[c].ok&&m[comps[c].c]) marks++;
+      return {n,marks,tex:tex/n,dots:dots/n,spots:spots/n,uneven:Math.sqrt(Math.max(0,dv2/n-mean*mean)),unevenW:Math.sqrt(Math.max(0,w2/n-meanW*meanW)),red:red/n,a:aM/n,blem:blem/n,shine:shine/n,edge:edge/n,edgeH:edgeH/n,L:l3/n}; };
+    // detail in eyes/brows/lips: these are always high-contrast, so they tell us if the PHOTO is soft
+    let ed=0,en=0; for(let i=0;i<N;i++) if(excl[i]&&face[i]){ed+=Math.abs(Lf[i]-L2[i])*kL;en++;}
+    const eyeDet=en>500?ed/en:null;
     const R={}; for(const k of Object.keys(masks)) R[k]=stat(masks[k]);
     const cnt=new Set(); for(const k of ['forehead','left_cheek','right_cheek','chin']) if(masks[k]) for(let c=1;c<comps.length;c++) if(comps[c].ok&&masks[k][comps[c].c]) cnt.add(c);
     const darkMarks=cnt.size;
-    window.__devStats=R; window.__devInfo={KS,W,H,PXMM,darkMarks,comps:[...cnt].map(c=>({mm2:+comps[c].mm2.toFixed(1),dep:+comps[c].dep.toFixed(1),rough:+comps[c].rough.toFixed(2),chr:+comps[c].chr.toFixed(2)}))};
-    const TH=window.__TH||{tex:[1.1,3.4],pore:[.015,.16],spot:[.004,.05],unev:[1.0,3.0]};
+    if(window.__DBG){const T=window.__TUNE||{};const list=[];for(let c=1;c<comps.length;c++){const q=comps[c];list.push({ok:!!q.ok,mm2:+q.mm2.toFixed(2),dep:+q.dep.toFixed(2),rough:+q.rough.toFixed(2),asp:+q.asp.toFixed(2),e:q.edgeTouch,x:q.c%W,y:(q.c-q.c%W)/W});}
+      window.__dbg={W,H,img:c0.toDataURL('image/jpeg',.9),comps:list,PXMM};}
+    window.__devStats=R; window.__devInfo={KS,W,H,PXMM,darkMarks,eyeDet:eyeDet&&+eyeDet.toFixed(3),comps:[...cnt].map(c=>({mm2:+comps[c].mm2.toFixed(1),dep:+comps[c].dep.toFixed(1),rough:+comps[c].rough.toFixed(2),chr:+comps[c].chr.toFixed(2)}))};
+    const TH=window.__TH||{tex:[.55,1.35],pore:[.004,.030],unevW:[1.1,4.2],shine:[.004,.06],ue:[3,22]};
     const sco={
-      texture:v=>sc01(v.tex,TH.tex[0],TH.tex[1]), pores:v=>sc01(v.dots,TH.pore[0],TH.pore[1]), pigmentation:v=>Math.round(.6*sc01(v.spots,TH.spot[0],TH.spot[1])+.4*sc01(v.uneven,TH.unev[0],TH.unev[1])),
-      redness:v=>Math.round((sc01(v.a,9,22)+sc01(v.red,.02,.13))/2), acne:v=>sc01(v.blem,.002,.03), oil:v=>sc01(v.shine,.004,.05), lines:v=>sc01(v.edge,.02,.13), linesH:v=>sc01(v.edgeH,.008,.06)};
+      texture:v=>sc01(v.tex,TH.tex[0],TH.tex[1]), pores:v=>sc01(v.dots,TH.pore[0],TH.pore[1]), pigmentation:v=>sc01(v.unevenW,TH.unevW[0],TH.unevW[1]),
+      redness:v=>Math.round(.75*sc01(v.a,9,22)+.25*sc01(v.red,.02,.13)), acne:v=>sc01(v.blem,.002,.03), oil:v=>sc01(v.shine,TH.shine[0],TH.shine[1]), lines:v=>sc01(v.edge,.02,.13), linesH:v=>sc01(v.edgeH,.008,.06)};
     const RG={texture:['forehead','nose','left_cheek','right_cheek','chin'],pores:['nose','left_cheek','right_cheek','forehead'],pigmentation:['forehead','left_cheek','right_cheek','chin'],
-      redness:['forehead','nose','left_cheek','right_cheek','chin'],acne:['forehead','left_cheek','right_cheek','chin','jawline'],oil:['forehead','nose','chin']};
+      redness:['forehead','nose','left_cheek','right_cheek','chin'],oil:['forehead','nose','chin']};
     const cat={}, avg=a=>{a=a.filter(v=>v!=null);return a.length?Math.round(a.reduce((p,q)=>p+q,0)/a.length):null;};
     for(const [c,rs] of Object.entries(RG)){const regs={};rs.forEach(r=>{if(R[r])regs[r]=sco[c](R[r]);});cat[c]={score:avg(Object.values(regs)),regions:regs};}
     const cheekL=avg([R.left_cheek&&R.left_cheek.L,R.right_cheek&&R.right_cheek.L]), ueL=R.under_eyes?R.under_eyes.L:null;
-    const ue=ueL!=null&&cheekL!=null?sc01(cheekL-ueL,2,13):null;
-    // many separate dark marks cap the even-tone score, whatever their total area
-    if(cat.pigmentation.score!=null){const cap=darkMarks>24?35:darkMarks>12?49:darkMarks>7?69:100; cat.pigmentation.score=Math.min(cat.pigmentation.score,cap);}
+    const ue=ueL!=null&&cheekL!=null?sc01(cheekL-ueL,TH.ue[0],TH.ue[1]):null;
     cat.under_eye={score:ue,regions:ue!=null?{under_eyes:ue}:{}};
     const areas={}; if(R.forehead)areas.forehead_lines=sco.linesH(R.forehead); if(R.crows)areas.crows_feet=sco.lines(R.crows); if(R.under_eyes)areas.under_eye_lines=sco.lines(R.under_eyes); if(R.naso)areas.nasolabial_folds=sco.lines(R.naso);
     cat.wrinkles={score:avg(Object.values(areas)),regions:{...(areas.forehead_lines!=null?{forehead:areas.forehead_lines}:{}),...(areas.under_eye_lines!=null?{under_eyes:areas.under_eye_lines}:{})},areas};
-    const m=fr.meta||{}, good=m.light>=70&&m.light<=210&&m.sharp>=40&&b.w>=280, conf=good?'medium':'low';
-    const NOTE={texture:'Fine surface variation (smoothness).',pores:'Density of tiny dark points, mostly nose and cheeks.',pigmentation:'Darker patches and how even the tone is.',redness:'Overall redness and red patches.',
+    const soft=eyeDet!=null&&eyeDet<3.8;  // the photo itself can't resolve pores or fine texture
+    const m=fr.meta||{}, good=!soft&&m.light>=70&&m.light<=210&&m.sharp>=40&&b.w>=280, conf=good?'medium':'low';
+    const NOTE={texture:'Fine surface variation (smoothness).',pores:'Share of skin covered by tiny dark points. Needs a sharp, close photo.',pigmentation:'How even the overall tone looks across each area.',redness:'Overall redness and red patches.',
       acne:'Small red, raised-looking spots.',oil:'Bright shine spots in the T-zone.',wrinkles:'Fine line edges on forehead, eyes and smile lines.',under_eye:'How much darker the under-eye area is than the cheeks.'};
-    const categories={texture:{...cat.texture,confidence:conf,note:NOTE.texture},wrinkles:{...cat.wrinkles,confidence:conf,note:NOTE.wrinkles},pores:{...cat.pores,confidence:conf,note:NOTE.pores},
-      pigmentation:{...cat.pigmentation,confidence:conf,note:NOTE.pigmentation},redness:{...cat.redness,confidence:'low',note:NOTE.redness+' Lighting colour affects this a lot.'},under_eye:{...cat.under_eye,confidence:conf,note:NOTE.under_eye},acne:{...cat.acne,confidence:'low',note:NOTE.acne}};
-    const scores={texture:cat.texture.score,pores:cat.pores.score,redness:cat.redness.score,blemishes:cat.acne.score,dark_spots:cat.pigmentation.score,oiliness:cat.oil.score,fine_lines:cat.wrinkles.score,under_eye:ue};
-    Object.keys(scores).forEach(k=>{if(scores[k]==null)delete scores[k];});
-    const NAME={texture:'Smoothness',pores:'Pores',redness:'Calmness (redness)',blemishes:'Clarity (blemishes)',dark_spots:'Even tone',oiliness:'Oil balance',fine_lines:'Fine lines',under_eye:'Under-eye'};
+    const categories={texture:{...cat.texture,confidence:soft?'low':conf,note:NOTE.texture},wrinkles:{...cat.wrinkles,confidence:conf,note:NOTE.wrinkles},pores:{...cat.pores,confidence:soft?'low':conf,note:NOTE.pores},
+      pigmentation:{...cat.pigmentation,confidence:'low',note:NOTE.pigmentation+' Rough on this tablet.'},redness:{...cat.redness,confidence:'low',note:NOTE.redness+' Lighting colour affects this a lot.'},under_eye:{...cat.under_eye,confidence:conf,note:NOTE.under_eye},};
+    if(soft){cat.pores.score=null;cat.texture.score=null;cat.pores.regions={};cat.texture.regions={};}
+    const scores={texture:cat.texture.score,pores:cat.pores.score,redness:cat.redness.score,dark_spots:cat.pigmentation.score,oiliness:cat.oil.score,fine_lines:cat.wrinkles.score,under_eye:ue};
+    Object.keys(scores).forEach(k=>{if(scores[k]==null||!isFinite(scores[k]))delete scores[k];});
+    const NAME={texture:'Smoothness',pores:'Pores',redness:'Calmness (redness)',dark_spots:'Even tone',oiliness:'Oil balance',fine_lines:'Fine lines',under_eye:'Under-eye'};
     const TIP={texture:'Gentle exfoliation once or twice a week (when your treatments allow) and a daily moisturizer help smooth texture.',pores:'Regular cleansing helps; niacinamide or BHA products can make pores look smaller over weeks.',
       dark_spots:'Daily SPF matters most for dark marks; brightening ingredients such as niacinamide or vitamin C help over several weeks.',redness:'Keep products gentle and fragrance-free, and note anything that seems to trigger redness.',
       blemishes:'Avoid picking; spot-treat active blemishes and keep pillowcases and phone screens clean.',oiliness:'A lightweight, non-comedogenic moisturizer and blotting during the day help with shine.',
@@ -3879,9 +3892,9 @@ async function deviceAnalyze(){
     const overall=(()=>{const v=Object.values(scores),mean=v.reduce((p,q)=>p+q,0)/v.length,w=[...v].sort((x,y)=>x-y).slice(0,2);return Math.round(.65*mean+.35*(w.reduce((p,q)=>p+q,0)/w.length));})();
     const regions={}; for(const rk of Object.keys(REG)){const vals=Object.values(categories).map(c=>c.regions&&c.regions[rk]).filter(v=>v!=null); if(cat.oil.regions[rk]!=null)vals.push(cat.oil.regions[rk]);
       if(vals.length){const worst=Object.entries(categories).filter(([k,c])=>c.regions&&c.regions[rk]!=null).sort((x,y)=>x[1].regions[rk]-y[1].regions[rk])[0];regions[rk]={score:avg(vals),note:worst?'most visible: '+(NAME[{acne:'blemishes',pigmentation:'dark_spots',wrinkles:'fine_lines'}[worst[0]]||worst[0]]||worst[0]).toLowerCase():''};}}
-    const issue=[b.w*S<560?'the face was too small or low-resolution to see pores well (move closer or use the back camera)':'',m.light<70?'the light was dim':'',m.light>210?'the light was very bright':'',m.sharp<40?'the photo was a little blurry':'',b.w<280?'the face was small in the frame':''].filter(Boolean);
-    const r={method:'device',scoring:2,counts:{dark_marks:darkMarks},quality:{ok:!issue.length,issue:issue.length?'Accuracy is lower because '+issue.join(' and ')+'.':''},skin_type:null,overall,scores,
-      notes:{texture:'Measured from fine detail in the front photo.',pores:`Share of skin covered by tiny dark points, measured at ${Math.round(b.w*S)}px across the face.`,dark_spots:`About ${darkMarks} separate darker marks found on the forehead, cheeks, nose, chin and jaw.`,redness:'Affected by the colour of your light.'},
+    const issue=[soft?'this photo is too soft to resolve pores or fine texture, so those two scores are left out rather than guessed - move closer, use the back camera and steady, even light':'',b.w*S<560?'the face was too small or low-resolution to see pores well (move closer or use the back camera)':'',m.light<70?'the light was dim':'',m.light>210?'the light was very bright':'',m.sharp<40?'the photo was a little blurry':'',b.w<280?'the face was small in the frame':''].filter(Boolean);
+    const r={method:'device',scoring:3,quality:{ok:!issue.length,issue:issue.length?'Accuracy is lower because '+issue.join(' and ')+'.':''},skin_type:null,overall,scores,
+      notes:{texture:'Measured from fine detail in the front photo.',blemishes:'Individual blemishes are not measured on this tablet - scan in Claude for that.',pores:`Share of skin covered by tiny dark points, measured at ${Math.round(b.w*S)}px across the face.`,dark_spots:'Rough measure of how evenly toned the skin looks. This tablet cannot count individual dark marks reliably - scan in Claude for that.',redness:'Affected by the colour of your light.'},
       summary:`On-device measurements of your front photo. Looking best: ${ranked.slice(0,2).map(([k])=>NAME[k]).join(' and ')}. Most room to improve: ${ranked.slice(-2).reverse().map(([k])=>NAME[k]).join(' and ')}. These are relative measures for tracking change, so scan in the same place and light each time.`,
       positives:ranked.slice(0,2).map(([k,v])=>`${NAME[k]} looks good (${v})`),
       focus:ranked.slice(-2).reverse().map(([k,v])=>({name:NAME[k],why:`Score ${v} — the lowest of your measures this scan.`,tip:TIP[k]})),
@@ -3998,7 +4011,7 @@ renderDevCard=function(){
     <div class="tw-actions"><label class="tb primary" for="dataIn">⬆ Import data file</label><button class="tb" data-dev="export">⬇ Back up / export my data</button>${TAB.installEvt?'<button class="tb" data-tfs="install">📲 Install app</button>':''}</div>
     <div class="tw-actions" style="margin-top:10px;align-items:center"><span class="tw-sub">App version <b>${APP_VER}</b></span><button class="tb link" data-tfs="update">↻ Check for updates</button></div>`;
 };
-const APP_VER='1.4 (stricter scan + recommendations)';
+const APP_VER='1.5 (calibrated scan)';
 async function appUpdate(){
   toast('Checking for updates…');
   try{ const reg=await navigator.serviceWorker?.getRegistration(); if(reg) await reg.update();
